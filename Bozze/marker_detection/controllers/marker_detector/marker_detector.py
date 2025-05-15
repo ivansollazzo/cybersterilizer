@@ -1,383 +1,265 @@
 '''
-ArUco Marker Detection and Area Drawing Controller
+ArUco Marker Detection and Dynamic Grid Controller
 Cybersterilizer Project
 Università degli Studi di Palermo
 '''
 
+# Import needed libraries
 from controller import Supervisor
 import cv2
 import cv2.aruco as aruco
 import numpy as np
 
-# Define the supervisor and the time step
+# Initialize the Webots supervisor
 supervisor = Supervisor()
-TIME_STEP = int(supervisor.getBasicTimeStep())
-
-# Define the robot node
-robot = supervisor.getFromDef("END_EFFECTOR")
+time_step = int(supervisor.getBasicTimeStep())
 
 # Initialize the camera
 camera = supervisor.getDevice('camera')
-camera.enable(TIME_STEP)
-width = camera.getWidth()
-height = camera.getHeight()
+camera.enable(time_step)
+
+# Calculate camera parameters
+img_width, img_height = camera.getWidth(), camera.getHeight()
 fov = camera.getFov()
 
-# Calculate the focal length
-fx = (width / 2) / np.tan(fov / 2)
-fy = fx
+# Calculate the camera intrinsic matrix. Camera is assumed to be the pinhole model.
+cx, cy = img_width / 2, img_height / 2
+fx = cx / np.tan(fov / 2)
+camera_matrix = np.array([[fx, 0, cx], [0, fx, cy], [0, 0, 1]], dtype=np.float32)
+dist_coeffs = np.zeros((4, 1), dtype=np.float32)
 
-# Calculate the central point
-cx = width / 2
-cy = height / 2
-
-# Calculate the camera matrix
-camera_matrix = np.array(
-    [
-        [fx, 0, cx],
-        [0, fy, cy],
-        [0, 0, 1]
-    ], dtype=np.float32
-)
-
-# No distortion coefficients
-distortion_coeffs = np.zeros((4, 1), dtype=np.float32)
-
-# Initialize the display
+# Initialize a display for the camera image
 display = supervisor.getDevice('display')
 
-# Define the ArUco dictionary and detector parameters
+# Initialize the ArUco marker dictionary and parameters
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_250)
-parameters = aruco.DetectorParameters()
+detector_params = aruco.DetectorParameters()
 
-# Physical length of the marker in meters
-marker_length = 0.05
+# Set the marker size in meters and target cell area in cm^2
+MARKER_SIZE = 0.05  # meters
+CELL_AREA_TARGET = 30.0  # cm^2
 
-# Grid dimensions (number of cells)
-GRID_ROWS = 6
-GRID_COLS = 6
-
-# Create a dictionary with the marker IDs and their corresponding definitions
-marker_definitions = {
-    0: "ARUCO_1",
-    1: "ARUCO_2",
-    2: "ARUCO_3",
-    3: "ARUCO_4",
+# Map marker IDs to DEF names in Webots
+marker_defs = {
+    0: 'ARUCO_1',
+    1: 'ARUCO_2',
+    2: 'ARUCO_3',
+    3: 'ARUCO_4'
 }
 
-# Create a dictionary to store the marker positions according to the camera frame
-camera_marker_positions = {
-    0: np.array([0, 0, 0], dtype=np.float32),
-    1: np.array([0, 0, 0], dtype=np.float32),
-    2: np.array([0, 0, 0], dtype=np.float32),
-    3: np.array([0, 0, 0], dtype=np.float32),
-}
+# Initialize dictionaries to store camera and world positions of markers
+cam_positions = {i: np.zeros(3, np.float32) for i in marker_defs}
+world_positions = {i: np.zeros(3, np.float32) for i in marker_defs}
 
-# Create a dictionary to store the marker positions according to the world frame
-world_marker_positions = {
-    0: np.array([0, 0, 0], dtype=np.float32),
-    1: np.array([0, 0, 0], dtype=np.float32),
-    2: np.array([0, 0, 0], dtype=np.float32),
-    3: np.array([0, 0, 0], dtype=np.float32),
-}
+# Function to update camera positions of markers
+def update_cam_positions(corners, ids):
 
-# Dictionaries to store cell centers
-camera_cell_centers = {}  # (row, col) -> (x, y, z) in camera coordinates
-world_cell_centers = {}   # (row, col) -> (x, y, z) in world coordinates
-
-# Function to get marker positions in camera coordinates
-def update_camera_marker_positions(corners, ids):
+    # If there are no markers, return
     if ids is None:
         return
 
-    # Estimate pose
-    rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
-        corners, marker_length, camera_matrix, distortion_coeffs
-    )
+    # Do pose estimation for each marker
+    _, translations, _ = aruco.estimatePoseSingleMarkers(
+        corners, MARKER_SIZE, camera_matrix, dist_coeffs)
 
-    # Get the coordinates of the markers
-    for i in range(len(ids)):
-        tvec = tvecs[i][0]
-        rvec = rvecs[i][0]
+    # Store camera positions in the dictionary
+    for idx, marker_id in enumerate(ids.flatten()):
+        cam_positions[marker_id] = translations[idx][0]
 
-        # Store the coordinates according to the camera frame
-        camera_marker_positions[ids[i][0]] = tvec
-
-def update_world_marker_positions():
-    for marker in marker_definitions.keys():
-        # Get the node
-        marker_node = supervisor.getFromDef(marker_definitions[marker])
-
-        # Get the position of the marker in world coordinates
-        position = marker_node.getPosition()
-
-        # Store the position in the dictionary
-        world_marker_positions[marker] = np.array([position[0], position[1], position[2]], dtype=np.float32)
-
-# Function to print marker positions in camera/world coordinates
-def print_marker_positions(corners, ids):
-    if ids is None:
-        return
-
-    # Print the coordinates of the markers in camera coordinates
-    for marker in marker_definitions.keys():
-        print(f"Marker {marker_definitions[marker]} (Camera position): {camera_marker_positions[marker]}")
-        print(f"Marker {marker_definitions[marker]} (World position): {world_marker_positions[marker]}")
-
-# Function to detect ArUco markers in a raw image buffer
-def detect_markers(raw, width, height):
+# Function to update world positions of markers
+def update_world_positions():
     
-    # Convert the raw buffer to a BGRA image
-    image_bgra = np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 4))
-    
-    # Convert BGRA to BGR for OpenCV processing
-    image_bgr = cv2.cvtColor(image_bgra, cv2.COLOR_BGRA2BGR)
-    
-    # Detect ArUco markers
-    corners, ids, _ = aruco.detectMarkers(image_bgr, aruco_dict, parameters=parameters)
+    # Update world positions of markers from Webots nodes
+    for m_id, def_name in marker_defs.items():
+        node = supervisor.getFromDef(def_name)
+        if node:
+            world_positions[m_id] = np.array(node.getPosition(), np.float32)
 
-    # Estimate pose and draw axis if markers are detected
+# Function to compute the centroid of the four markers in world space
+def compute_world_center():
+    pts = np.stack([world_positions[i] for i in sorted(marker_defs)])
+    return pts.mean(axis=0)
+
+# Function to print camera vs world positions of markers as a table
+def print_marker_table():
+    header = "Marker      |   Cam X   Cam Y   Cam Z ||   Wld X   Wld Y   Wld Z"
+    print(header)
+    print('-' * len(header))
+    for m_id, def_name in marker_defs.items():
+        cam = cam_positions[m_id]
+        wld = world_positions[m_id]
+        print(f"{def_name:<10} | {cam[0]:8.3f}{cam[1]:8.3f}{cam[2]:8.3f} || {wld[0]:8.3f}{wld[1]:8.3f}{wld[2]:8.3f}")
+
+# Function to compute grid dimensions based on target cell area
+def compute_grid_dims():
+
+    # Compute the area of the quadrilateral formed by the four markers
+    corners = [world_positions[i] for i in range(4)]
+
+    # Calculate the area using the cross product of two vectors
+    a1 = 0.5 * np.linalg.norm(np.cross(corners[1]-corners[0], corners[2]-corners[0]))
+    a2 = 0.5 * np.linalg.norm(np.cross(corners[2]-corners[0], corners[3]-corners[0]))
+    total_area_cm2 = (a1 + a2) * 1e4
+
+    # Calculate the number of cells based on the target cell area
+    num_cells = max(1, int(round(total_area_cm2 / CELL_AREA_TARGET)))
+
+    # Calculate the number of rows and columns for the grid
+    rows = int(np.floor(np.sqrt(num_cells)))
+    cols = int(np.ceil(num_cells / rows))
+
+    return rows, cols
+
+# Function to detect markers and draw axes on the image
+def detect_and_draw_markers(frame_raw):
+
+    # Convert the raw image to a numpy array and reshape it
+    img_bgra = np.frombuffer(frame_raw, np.uint8).reshape(img_height, img_width, 4)
+    img_bgr = cv2.cvtColor(img_bgra, cv2.COLOR_BGRA2BGR)
+
+    # Detect the markers in the image
+    corners, ids, _ = aruco.detectMarkers(img_bgr, aruco_dict, parameters=detector_params)
+    
+    # If there are detected markers, draw them on the image
     if ids is not None:
         rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(
-            corners, marker_length, camera_matrix, distortion_coeffs
-        )
-        for i in range(len(ids)):
-            cv2.drawFrameAxes(image_bgr, camera_matrix, distortion_coeffs, rvecs[i], tvecs[i], marker_length * 0.5)
+            corners, MARKER_SIZE, camera_matrix, dist_coeffs)
+        for rv, tv in zip(rvecs, tvecs):
+            cv2.drawFrameAxes(img_bgr, camera_matrix, dist_coeffs, rv, tv, MARKER_SIZE/2)
+    img_marked = aruco.drawDetectedMarkers(img_bgr.copy(), corners, ids)
+    
+    return img_marked, corners, ids
 
-    # Draw detected markers
-    image_bgr_marked = aruco.drawDetectedMarkers(image_bgr.copy(), corners, ids)
+# Function to sort the corners of the detected markers
+def sort_quad(corners, ids):
 
-    # Convert back to BGRA for Webots display
-    image_bgra_marked = cv2.cvtColor(image_bgr_marked, cv2.COLOR_BGR2BGRA)
-    return image_bgra_marked, corners, ids
-
-# Function to sort corners in clockwise order starting from top-left
-def sort_corners(centers):
-    # First find the centroid
-    centroid = np.mean(centers, axis=0)
-    
-    # Calculate angles relative to centroid
-    angles = np.arctan2(centers[:, 1] - centroid[1], centers[:, 0] - centroid[0])
-    
-    # Sort by angle
-    sorted_indices = np.argsort(angles)
-    return centers[sorted_indices]
-
-# Function to draw a quadrilateral area based on the first 4 detected markers
-def draw_area(image, corners, ids):
-    
-    if ids is None or len(ids) < 4:
-        return None
-    centers = []
-    
-    # Reshape corner points and calculate the center of each marker
-    for c in corners[:4]:
-        pts = c.reshape((4, 2))
-        center = pts.mean(axis=0)
-        centers.append(center)
-    
-    centers = np.array(centers, dtype=np.float32)
-    
-    # Sort corners in clockwise order
-    centroid = centers.mean(axis=0)
-    angles = np.arctan2(centers[:, 1] - centroid[1], centers[:, 0] - centroid[0])
+    # Sort the corners based on their IDs
+    pts = np.array([c.reshape(-1,2).mean(axis=0) for c in corners[:4]], np.float32)
+    center = pts.mean(axis=0)
+    angles = np.arctan2(pts[:,1]-center[1], pts[:,0]-center[0])
     order = np.argsort(angles)
-    pts4 = centers[order].astype(int)
     
-    # Draw the area outline
-    cv2.polylines(image, [pts4], isClosed=True, color=(0, 255, 0), thickness=3)
-    
-    return image, pts4
+    return pts[order], ids.flatten()[order]
 
-# Function to generate grid inside the quadrilateral
-def create_grid(image, corners, grid_rows=GRID_ROWS, grid_cols=GRID_COLS):
-    """
-    Create a grid inside the quadrilateral defined by the four corners.
-    Returns the image with grid lines and centers of cells in both image and 3D coordinates.
-    """
-    # Compute the intersection points of the grid lines
-    grid_points_2d = np.zeros((grid_rows + 1, grid_cols + 1, 2), dtype=np.float32)
+# Function to draw grid overlay on the image and compute 2D centers
+def draw_grid_overlay(img, quad_pts, rows, cols):
+
+    # Draw the grid overlay on the image
+    tl, tr, br, bl = quad_pts
+    grid = np.zeros((rows+1, cols+1, 2), np.float32)
+
+    for i in range(rows+1):
+        alpha = i/rows
+        left  = tl*(1-alpha) + bl*alpha
+        right = tr*(1-alpha) + br*alpha
+        for j in range(cols+1):
+            grid[i,j] = left*(1-j/cols) + right*(j/cols)
     
-    # Compute the four sides of the quadrilateral
-    for i in range(grid_rows + 1):
-        # Interpolate along the left and right sides
-        alpha = i / grid_rows
-        left_point = corners[0] * (1 - alpha) + corners[3] * alpha
-        right_point = corners[1] * (1 - alpha) + corners[2] * alpha
+    # Draw grid lines
+    for i in range(rows+1): cv2.polylines(img, [grid[i].astype(int)], False, (0,0,255), 1)
+    for j in range(cols+1): cv2.polylines(img, [grid[:,j].astype(int)], False, (0,0,255), 1)
+    
+    # Compute and mark cell centers (2D)
+    centers2d = {}
+    
+    for i in range(rows):
+        for j in range(cols):
+            pts = grid[[i,i+1,i+1,i],[j,j,j+1,j+1]]
+            center = tuple(pts.mean(axis=0).astype(int))
+            centers2d[(i,j)] = center
+            cv2.circle(img, center, 3, (255,0,0), -1)
+    
+    return img, centers2d
+
+# Function to interpolate camera centers from 2D marker positions
+def interpolate_cam_centers(centers2d, rows, cols):
+
+    centers3d = {}
+    
+    for (i, j), _ in centers2d.items():
+        u, v = (j + 0.5) / cols, (i + 0.5)/ rows
+        top = cam_positions[0] * (1-u) + cam_positions[1] * u
+        bot = cam_positions[3] * (1-u) + cam_positions[2] * u
+        centers3d[(i,j)] = top * (1-v) + bot * v
+    
+    return centers3d
+
+# Function to interpolate world centers from sorted marker IDs
+def interpolate_world_centers(sorted_ids, rows, cols):
+    
+    p0, p1, p2, p3 = [world_positions[id_] for id_ in sorted_ids]
+    
+    centers3d = {}
+    
+    for i in range(rows):
+        for j in range(cols):
+            u, v = (j + 0.5) / cols, (i + 0.5) / rows
+            centers3d[(i,j)] = (
+                (1-u) * (1-v) * p0 + u *(1-v) * p1 + u * v * p2 + (1-u) * v * p3
+            )
+    
+    return centers3d
+
+# Function to print the cell table with camera and world coordinates
+def print_cell_table(cam_centers, world_centers):
+    header = "Cell (i,j) |   Cam X   Cam Y   Cam Z ||   Wld X   Wld Y   Wld Z"
+    print(header)
+    print('-'*len(header))
+    for key in sorted(cam_centers):
+        c = cam_centers[key]
+        w = world_centers[key]
+        print(f"({key[0]},{key[1]})        |{c[0]:8.3f}{c[1]:8.3f}{c[2]:8.3f} ||{w[0]:8.3f}{w[1]:8.3f}{w[2]:8.3f}")
+
+# Main loop
+frame_count = 0
+prev_raw = None
+
+while supervisor.step(time_step) != -1:
+    
+    # Get the camera image
+    raw = camera.getImage()
+    frame_count += 1
+    
+    # Process every 3 frames and if image changed
+    if frame_count % 3 == 0 and raw != prev_raw:
         
-        # Interpolate between left and right sides to get grid points
-        for j in range(grid_cols + 1):
-            beta = j / grid_cols
-            grid_points_2d[i, j] = left_point * (1 - beta) + right_point * beta
-    
-    # Draw the grid lines
-    # Horizontal lines
-    for i in range(grid_rows + 1):
-        pts = grid_points_2d[i, :].reshape((-1, 1, 2)).astype(np.int32)
-        cv2.polylines(image, [pts], False, (0, 0, 255), thickness=3)
-    
-    # Vertical lines
-    for j in range(grid_cols + 1):
-        pts = grid_points_2d[:, j].reshape((-1, 1, 2)).astype(np.int32)
-        cv2.polylines(image, [pts], False, (0, 0, 255), thickness=3)
-    
-    # Calculate and draw cell centers
-    cell_centers_2d = {}
-    for i in range(grid_rows):
-        for j in range(grid_cols):
-            # Calculate center of the cell as average of its four corners
-            center_x = (grid_points_2d[i, j][0] + grid_points_2d[i, j+1][0] + 
-                     grid_points_2d[i+1, j][0] + grid_points_2d[i+1, j+1][0]) / 4
-            center_y = (grid_points_2d[i, j][1] + grid_points_2d[i, j+1][1] + 
-                     grid_points_2d[i+1, j][1] + grid_points_2d[i+1, j+1][1]) / 4
+        # Detect and draw ArUco
+        img, corners, ids = detect_and_draw_markers(raw)
+        
+        if ids is not None and len(ids) >= 4:
             
-            center = (int(center_x), int(center_y))
-            cell_centers_2d[(i, j)] = center
+            # Update marker positions
+            update_world_positions()
+            update_cam_positions(corners, ids)
             
-            # Draw the center of the cell
-            cv2.circle(image, center, 5, (255, 0, 0), -1)
-    
-    return image, cell_centers_2d, grid_points_2d
-
-# Function to calculate 3D cell centers in camera coordinates
-def calculate_3d_cell_centers(cell_centers_2d, ids):
-    """
-    Estimate the 3D coordinates of cell centers in camera frame
-    based on the known 3D positions of the ArUco markers.
-    """
-    if ids is None or len(ids) < 4:
-        return {}
-    
-    # Ensure we have markers 0, 1, 2, and 3
-    marker_ids = [id[0] for id in ids]
-    if not all(i in marker_ids for i in range(4)):
-        return {}
-    
-    # Get the 3D positions of the markers in camera coordinates
-    marker_positions_3d = [camera_marker_positions[i] for i in range(4)]
-    
-    # Calculate 3D cell centers based on bilinear interpolation of marker positions
-    cell_centers_3d = {}
-    
-    # For each cell
-    for (row, col), (center_x, center_y) in cell_centers_2d.items():
-        # Calculate normalized position within the grid (0-1 range)
-        u = col / GRID_COLS
-        v = row / GRID_ROWS
-        
-        # Bilinear interpolation in 3D
-        # First interpolate top and bottom positions
-        top_pos = marker_positions_3d[0] * (1 - u) + marker_positions_3d[1] * u
-        bottom_pos = marker_positions_3d[3] * (1 - u) + marker_positions_3d[2] * u
-        
-        # Then interpolate between top and bottom
-        cell_center_3d = top_pos * (1 - v) + bottom_pos * v
-        
-        # Store result
-        cell_centers_3d[(row, col)] = cell_center_3d
-    
-    return cell_centers_3d
-
-# Function to convert 3D points from camera to world coordinates
-def camera_to_world_coordinates(camera_points):
-    """
-    Convert points from camera coordinates to world coordinates
-    based on the known positions of markers in both coordinate systems.
-    """
-    # This is a simplified approach using transformation estimation
-    world_points = {}
-    
-    # Only proceed if we have positions for all markers
-    if len(camera_marker_positions) < 4 or len(world_marker_positions) < 4:
-        return world_points
-    
-    # Get the camera and world positions of the markers
-    camera_positions = np.array([camera_marker_positions[i] for i in range(4)])
-    world_positions = np.array([world_marker_positions[i] for i in range(4)])
-    
-    # Calculate centroid of points in both coordinate systems
-    camera_centroid = np.mean(camera_positions, axis=0)
-    world_centroid = np.mean(world_positions, axis=0)
-    
-    # Center the points
-    camera_centered = camera_positions - camera_centroid
-    world_centered = world_positions - world_centroid
-    
-    # Calculate the cross-covariance matrix
-    H = np.dot(camera_centered.T, world_centered)
-    
-    # SVD decomposition
-    U, _, Vt = np.linalg.svd(H)
-    
-    # Calculate rotation matrix
-    R = np.dot(Vt.T, U.T)
-    
-    # Check for reflection case
-    if np.linalg.det(R) < 0:
-        Vt[-1,:] *= -1
-        R = np.dot(Vt.T, U.T)
-    
-    # Calculate translation
-    t = world_centroid - np.dot(R, camera_centroid)
-    
-    # Convert each camera point to world coordinates
-    for (row, col), point in camera_points.items():
-        world_points[(row, col)] = np.dot(R, point) + t
-    
-    return world_points
-
-# Function to print cell centers
-def print_cell_centers():
-    print("\n--- Cell Center Coordinates ---")
-    for (row, col) in camera_cell_centers.keys():
-        camera_pos = camera_cell_centers[(row, col)]
-        world_pos = world_cell_centers.get((row, col), np.array([0, 0, 0]))
-        print(f"Cell ({row}, {col}):")
-        print(f"  Camera coordinates: {camera_pos}")
-        print(f"  World coordinates: {world_pos}")
-
-if __name__ == "__main__":
-    # Frame processing control variables
-    frame_counter = 0
-    last_raw = None
-    image_to_display = np.zeros((height, width, 4), dtype=np.uint8)
-
-    # Main loop
-    while supervisor.step(TIME_STEP) != -1:
-        raw = camera.getImage()
-        frame_counter += 1
-
-        if frame_counter % 3 == 0 and raw != last_raw:
-            # Detect markers
-            image_markers, corners, ids = detect_markers(raw, width, height)
-
-            if ids is not None and len(ids) >= 4:
-                # Draw area
-                image_area, sorted_corners = draw_area(image_markers.copy(), corners, ids)
-                
-                # Create grid and get cell centers in 2D
-                image_grid, cell_centers_2d, grid_points = create_grid(image_area.copy(), sorted_corners)
-                image_to_display = image_grid
-                
-                # Update marker positions
-                update_world_marker_positions()
-                update_camera_marker_positions(corners, ids)
-                
-                # Calculate 3D cell centers in camera coordinates
-                camera_cell_centers = calculate_3d_cell_centers(cell_centers_2d, ids)
-                
-                # Convert to world coordinates
-                world_cell_centers = camera_to_world_coordinates(camera_cell_centers)
-                
-                # Print marker positions and cell centers
-                print_marker_positions(corners, ids)
-                print_cell_centers()
-            else:
-                image_to_display = image_markers
+            # Sort quad corners and IDs
+            quad_pts, quad_ids = sort_quad(corners, ids)
             
-            # Update display in Webots
-            ir = display.imageNew(image_to_display.tobytes(), display.BGRA, width, height)
-            display.imagePaste(ir, 0, 0, False)
-            display.imageDelete(ir)
-
-            last_raw = raw
+            # Compute grid layout
+            rows, cols = compute_grid_dims()
+            
+            # Overlay grid and get 2D centers
+            img, centers2d = draw_grid_overlay(img, quad_pts, rows, cols)
+            
+            # Interpolate 3D centers
+            cam_centers   = interpolate_cam_centers(centers2d, rows, cols)
+            world_centers = interpolate_world_centers(quad_ids, rows, cols)
+            
+            # Print tables
+            print_marker_table()
+            print(f"Grid size: {rows}x{cols}  (target cell area: {CELL_AREA_TARGET} cm^2)")
+            print_cell_table(cam_centers, world_centers)
+            
+            # Print overall grid center
+            wc = compute_world_center()
+            print(f"World Grid Center: {wc[0]:.3f}, {wc[1]:.3f}, {wc[2]:.3f}")
+        
+        prev_raw = raw
+        
+        # Update display
+        img_bgra = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+        img_buffer = img_bgra.tobytes()
+        
+        ir = display.imageNew(img_buffer, display.BGRA, img_width, img_height)
+        display.imagePaste(ir, 0, 0, False)
+        display.imageDelete(ir)

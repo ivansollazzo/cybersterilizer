@@ -8,11 +8,25 @@ EXTERNPROTO "../protos/EndEffectorBase.proto"
 WorldInfo {
 }
 Viewpoint {
-  orientation 0.47983226614229774 0.04199944225828237 -0.8763544050318571 2.9961470739377454
-  position 2.0989304583706203 0.22327734031771423 3.019949783825687
+  orientation 0.4002643906420282 -0.6562238164958146 -0.6396551572899521 4.769161653512223
+  position -0.7322335060835078 -1.369247531915899 2.891200976362447
+}
+Solid {
+  translation -0.112 0.091 0.05
+  children [
+    Shape {
+      appearance PBRAppearance {
+      }
+      geometry Cylinder {
+        height 0.1
+        radius 0.01
+      }
+    }
+  ]
+  name "solid(4)"
 }
 DEF ARUCO_4 Solid {
-  translation 0 -0.31 0.05
+  translation -0.16 -0.22 0.05
   children [
     Shape {
       appearance PBRAppearance {
@@ -23,14 +37,14 @@ DEF ARUCO_4 Solid {
         }
       }
       geometry Plane {
-        size 0.15 0.15
+        size 0.05 0.05
       }
     }
   ]
   name "solid(2)"
 }
 DEF ARUCO_3 Solid {
-  translation -0.31 -0.32 0.05
+  translation -0.37 -0.25 0.05
   children [
     Shape {
       appearance PBRAppearance {
@@ -41,14 +55,14 @@ DEF ARUCO_3 Solid {
         }
       }
       geometry Plane {
-        size 0.15 0.15
+        size 0.05 0.05
       }
     }
   ]
   name "solid(3)"
 }
 DEF ARUCO_2 Solid {
-  translation -0.34 0.22 0.05
+  translation -0.33 -0.01 0.05
   children [
     Shape {
       appearance PBRAppearance {
@@ -59,14 +73,14 @@ DEF ARUCO_2 Solid {
         }
       }
       geometry Plane {
-        size 0.15 0.15
+        size 0.05 0.05
       }
     }
   ]
   name "solid(1)"
 }
 DEF ARUCO_1 Solid {
-  translation 0.16 0.13 0.05
+  translation -0.14 -0.04 0.05
   children [
     Shape {
       appearance PBRAppearance {
@@ -77,7 +91,7 @@ DEF ARUCO_1 Solid {
         }
       }
       geometry Plane {
-        size 0.15 0.15
+        size 0.05 0.05
       }
     }
   ]
