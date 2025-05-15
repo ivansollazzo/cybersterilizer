@@ -1,0 +1,112 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/floors/protos/RectangleArena.proto"
+EXTERNPROTO "../protos/EndEffectorBase.proto"
+
+WorldInfo {
+}
+Viewpoint {
+  orientation 0.020732004763482238 0.9957730995001352 -0.0894769148461246 0.5946706215767456
+  position -2.6617058049688325 0.02501403639220323 1.9705525695961437
+}
+DEF ARUCO_4 Solid {
+  translation 0 -0.31 0.05
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColorMap ImageTexture {
+          url [
+            "../textures/aruco_4.png"
+          ]
+        }
+      }
+      geometry Plane {
+        size 0.15 0.15
+      }
+    }
+  ]
+  name "solid(2)"
+}
+DEF ARUCO_3 Solid {
+  translation -0.31 -0.32 0.05
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColorMap ImageTexture {
+          url [
+            "../textures/aruco_3.png"
+          ]
+        }
+      }
+      geometry Plane {
+        size 0.15 0.15
+      }
+    }
+  ]
+  name "solid(3)"
+}
+DEF ARUCO_2 Solid {
+  translation -0.2 0 0.05
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColorMap ImageTexture {
+          url [
+            "../textures/aruco_2.png"
+          ]
+        }
+      }
+      geometry Plane {
+        size 0.15 0.15
+      }
+    }
+  ]
+  name "solid(1)"
+}
+DEF ARUCO_1 Solid {
+  translation 0 0 0.05
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColorMap ImageTexture {
+          url [
+            "../textures/aruco_1.png"
+          ]
+        }
+      }
+      geometry Plane {
+        size 0.15 0.15
+      }
+    }
+  ]
+}
+DEF END_EFFECTOR Robot {
+  translation -0.11 -0.079998 0.88
+  rotation 1 0 0 3.14159
+  children [
+    Display {
+      width 1920
+      height 1080
+    }
+    DEF CAMERA Camera {
+      translation -0.02 -6e-07 0.08
+      rotation 0.7071067811862364 9.381857096790023e-07 0.7071067811862364 3.14159
+      fieldOfView 1.5
+      width 1920
+      height 1080
+    }
+    EndEffectorBase {
+    }
+  ]
+  name "endeffector"
+  controller "marker_detector"
+  supervisor TRUE
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+RectangleArena {
+}
