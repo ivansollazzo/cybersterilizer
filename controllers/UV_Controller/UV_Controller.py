@@ -1,45 +1,101 @@
 from controller import Supervisor
+import random
 
 robot = Supervisor()
 timestep = int(robot.getBasicTimeStep())
 
-# Ottieni i nodi
-uv_detector = robot.getFromDef("UVDetector")
-bacteria_solid = robot.getFromDef("bacteria")
-light_killer = robot.getFromDef("killer")
-light_killer.getField("intensity").setSFFloat(0.8)
+# Parametri arena
+arena = robot.getFromDef("RectangleArena")
+arena_size = 1.0  # larghezza e lunghezza (assunta quadrata)
+spawn_z = 0.07
+num_bacteria = 5
+regen_delay = 5.0  # secondi
 
-if uv_detector is None or bacteria_solid is None:
-    print("Errore: Nodo non trovato.")
+# Ottieni i nodi esistenti
+uv_detector = robot.getFromDef("UVDetector")
+light_killer = robot.getFromDef("killer")
+bacteria_group = robot.getFromDef("BacteriaGroup")  # nel .wbt: DEF BacteriaGroup Group { children [ ] }
+
+if uv_detector is None or light_killer is None or bacteria_group is None:
+    print("Errore: Nodo mancante.")
     exit(1)
 
-# Imposta la posizione iniziale
-bacteria_solid.getField('translation').setSFVec3f([0, 0, 0.07])
+# Campo per aggiungere nodi dinamicamente
+group_field = bacteria_group.getField("children")
 
-# Ottieni campi grafici
-bacteria_shape = bacteria_solid.getField("children").getMFNode(0)
-appearance = bacteria_shape.getField("appearance").getSFNode()
-transparency_field = appearance.getField("transparency")
+# Prototipo batterio (semplice sfera)
+bacteria_proto = """
+Solid {
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 0.8 0.1 0.1
+          transparency 0.0
+        }
+      }
+      geometry Sphere {
+        radius 0.02
+      }
+    }
+  ]
+  name "bacteria"
+  boundingObject Sphere {
+    radius 0.02
+  }
+  
+}
+"""
 
-# Stati
-bacteria_hidden = False
-waiting_to_hide = False
-wait_time = 0.0
-wait_duration = 3.0  # secondi di attesa prima di nascondere
+# Funzione per generare coordinate randomiche nell’arena
+def random_position():
+    return [
+        random.uniform(-arena_size / 2, arena_size / 2),
+        random.uniform(-arena_size / 2, arena_size / 2),
+        spawn_z
+    ]
 
-while True:
-    step_result = robot.step(timestep)
+# Crea n batteri iniziali
+bacteria_list = []
+for _ in range(num_bacteria):
+    group_field.importMFNodeFromString(-1, bacteria_proto)
+    node = group_field.getMFNode(group_field.getCount() - 1)
+    node.getField("translation").setSFVec3f(random_position())
+    shape = node.getField("children").getMFNode(0)
+    material = shape.getField("appearance").getSFNode().getField("material").getSFNode()
+    bacteria_list.append({
+        "node": node,
+        "transparency": material.getField("transparency"),
+        "hidden": False,
+        "waiting": False,
+        "wait_time": 0.0,
+        "regen_time": 0.0
+    })
 
-    if step_result == -1:
-        # Fine simulazione: ripristina posizione e visibilità
-        bacteria_solid.getField('translation').setSFVec3f([0, 0, 0.07])
-        transparency_field.setSFFloat(0.0)
-        print("Fine simulazione: batterio riposizionato.")
-        break
+# Parametri temporali
+wait_duration = 3.0
 
-    if not bacteria_hidden:
+# Simulazione
+while robot.step(timestep) != -1:
+    all_hidden = True
+    for bac in bacteria_list:
+        node = bac["node"]
+
+        if bac["hidden"]:
+            bac["regen_time"] += timestep / 1000.0
+            if bac["regen_time"] >= regen_delay:
+                new_pos = random_position()
+                node.getField("translation").setSFVec3f(new_pos)
+                bac["transparency"].setSFFloat(0.0)
+                bac["hidden"] = False
+                bac["regen_time"] = 0.0
+                print("Batterio rigenerato in posizione:", new_pos)
+            continue  # skip controllo UV
+
+        all_hidden = False
+
         detector_pos = uv_detector.getPosition()
-        bacteria_pos = bacteria_solid.getPosition()
+        bacteria_pos = node.getPosition()
 
         dx = detector_pos[0] - bacteria_pos[0]
         dy = detector_pos[1] - bacteria_pos[1]
@@ -48,41 +104,38 @@ while True:
 
         orientation = uv_detector.getOrientation()
         dir_vector = [orientation[2], orientation[5], orientation[8]]
-
         to_bacteria = [
             bacteria_pos[0] - detector_pos[0],
             bacteria_pos[1] - detector_pos[1],
             bacteria_pos[2] - detector_pos[2]
         ]
 
-        dot_product = sum(d * t for d, t in zip(dir_vector, to_bacteria))
+        dot = sum(d * t for d, t in zip(dir_vector, to_bacteria))
         dir_mag = sum(d**2 for d in dir_vector) ** 0.5
         to_bac_mag = sum(t**2 for t in to_bacteria) ** 0.5
-        cos_angle = dot_product / (dir_mag * to_bac_mag + 1e-6)
+        cos_angle = dot / (dir_mag * to_bac_mag + 1e-6)
 
-        if distance < 0.5 and cos_angle > 0.99:
-            transparency_field.setSFFloat(0.0)
+        if distance < 1.0 and cos_angle > 0.99:
+            bac["transparency"].setSFFloat(0.0)
             light_killer.getField("intensity").setSFFloat(5.0)
 
-            if not waiting_to_hide:
-                waiting_to_hide = True
-                wait_time = 0.0
-                print("Batterio individuato. Attesa per eliminazione.")
-
+            if not bac["waiting"]:
+                bac["waiting"] = True
+                bac["wait_time"] = 0.0
+                print("Batterio esposto alla luce.")
             else:
-                wait_time += timestep / 1000.0
-
-                if wait_time >= wait_duration:
-                    bacteria_solid.getField('translation').setSFVec3f([1000, 1000, 1000])
-                    bacteria_hidden = True
-                    waiting_to_hide = False
-                    print("Batterio eliminato")
-
+                bac["wait_time"] += timestep / 1000.0
+                if bac["wait_time"] >= wait_duration:
+                    node.getField("translation").setSFVec3f([1000, 1000, 1000])
+                    bac["hidden"] = True
+                    bac["waiting"] = False
+                    bac["wait_time"] = 0.0
+                    print("Batterio eliminato.")
         else:
-            waiting_to_hide = False
-            wait_time = 0.0
+            bac["waiting"] = False
+            bac["wait_time"] = 0.0
+            bac["transparency"].setSFFloat(1.0)
             light_killer.getField("intensity").setSFFloat(0.0)
-            transparency_field.setSFFloat(1.0)
 
-    else:
-        light_killer.getField("intensity").setSFFloat(0.0)
+    if all_hidden:
+        print("Tutti i batteri eliminati. In attesa di rigenerazione...")
