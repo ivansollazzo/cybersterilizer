@@ -1,73 +1,88 @@
-"""UV_Controller controller."""
-
 from controller import Supervisor
-import math
 
-# Inizializzazione del robot Supervisor
 robot = Supervisor()
 timestep = int(robot.getBasicTimeStep())
 
-# Funzione per determinare se il target è dentro lo spotlight
-def is_in_spotlight(spot_pos, spot_dir, target_pos, spot_angle, spot_range):
-    to_target = [target_pos[i] - spot_pos[i] for i in range(3)]
-    distance = math.sqrt(sum(x**2 for x in to_target))
-
-    if distance > spot_range:
-        return False
-
-    # Normalizza il vettore verso il target
-    norm_to_target = [x / distance for x in to_target]
-    dot_product = sum(norm_to_target[i] * spot_dir[i] for i in range(3))
-    dot_product = max(min(dot_product, 1.0), -1.0)  # Protezione da errori numerici
-
-    angle = math.acos(dot_product)
-    
-    print(f"🎯 Distance = {distance:.2f}, Angle = {math.degrees(angle):.2f}° (limit: {math.degrees(spot_angle/2):.2f}°)")
-    return angle < (spot_angle / 2)
-
-# Recupera nodi da DEF
-light_detector = robot.getFromDef("detector")
+# Ottieni i nodi
+uv_detector = robot.getFromDef("UVDetector")
+bacteria_solid = robot.getFromDef("bacteria")
 light_killer = robot.getFromDef("killer")
-bacteria = robot.getFromDef("bacteria")
-end_effector = robot.getFromDef("EndEffector")
+light_killer.getField("intensity").setSFFloat(0.8)
 
-# Controllo presenza nodi
-if not (light_detector and light_killer and bacteria and end_effector):
-    print("❌ Uno o più nodi DEF non trovati!")
+if uv_detector is None or bacteria_solid is None:
+    print("Errore: Nodo non trovato.")
     exit(1)
 
-# Imposta beamWidth a 60° (in radianti)
-beam_width_degrees = 60
-light_detector.getField("beamWidth").setSFFloat(math.radians(beam_width_degrees))
+# Imposta la posizione iniziale
+bacteria_solid.getField('translation').setSFVec3f([0, 0, 0.07])
 
-# Leggi parametri spotlight aggiornati
-spot_angle = math.radians(beam_width_degrees)
-spot_range = light_detector.getField("radius").getSFFloat()
+# Ottieni campi grafici
+bacteria_shape = bacteria_solid.getField("children").getMFNode(0)
+appearance = bacteria_shape.getField("appearance").getSFNode()
+transparency_field = appearance.getField("transparency")
 
-# Impostazioni iniziali luci
-light_detector.getField("intensity").setSFFloat(1.0)
-light_killer.getField("intensity").setSFFloat(1.0)
-light_detector.getField("color").setSFColor([0.667, 0.333, 1])  # blu/viola
-light_killer.getField("color").setSFColor([0, 0.667, 1])        # azzurro
+# Stati
+bacteria_hidden = False
+waiting_to_hide = False
+wait_time = 0.0
+wait_duration = 3.0  # secondi di attesa prima di nascondere
 
-# Loop principale
-while robot.step(timestep) != -1:
-    spot_pos = end_effector.getPosition()
-    target_pos = bacteria.getPosition()
+while True:
+    step_result = robot.step(timestep)
 
-    # Calcola direzione dinamica
-    to_target = [target_pos[i] - spot_pos[i] for i in range(3)]
-    distance = math.sqrt(sum(x**2 for x in to_target))
-    spot_dir = [x / distance for x in to_target] if distance > 0 else [0, 0, -1]
+    if step_result == -1:
+        # Fine simulazione: ripristina posizione e visibilità
+        bacteria_solid.getField('translation').setSFVec3f([0, 0, 0.07])
+        transparency_field.setSFFloat(0.0)
+        print("Fine simulazione: batterio riposizionato.")
+        break
 
-    visible = is_in_spotlight(spot_pos, spot_dir, target_pos, spot_angle, spot_range)
-  
+    if not bacteria_hidden:
+        detector_pos = uv_detector.getPosition()
+        bacteria_pos = bacteria_solid.getPosition()
 
-    # Gestione trasparenza
-    appearance_field = bacteria.getField("children").getMFNode(0).getField("appearance")
-    if appearance_field:
-        appearance_node = appearance_field.getSFNode()
-        if appearance_node:
-            transparency_field = appearance_node.getField("transparency")
-            if transparency_field:
-                transparency_field.setSFFloat(0.0 if visible else 1.0)
+        dx = detector_pos[0] - bacteria_pos[0]
+        dy = detector_pos[1] - bacteria_pos[1]
+        dz = detector_pos[2] - bacteria_pos[2]
+        distance = (dx**2 + dy**2 + dz**2) ** 0.5
+
+        orientation = uv_detector.getOrientation()
+        dir_vector = [orientation[2], orientation[5], orientation[8]]
+
+        to_bacteria = [
+            bacteria_pos[0] - detector_pos[0],
+            bacteria_pos[1] - detector_pos[1],
+            bacteria_pos[2] - detector_pos[2]
+        ]
+
+        dot_product = sum(d * t for d, t in zip(dir_vector, to_bacteria))
+        dir_mag = sum(d**2 for d in dir_vector) ** 0.5
+        to_bac_mag = sum(t**2 for t in to_bacteria) ** 0.5
+        cos_angle = dot_product / (dir_mag * to_bac_mag + 1e-6)
+
+        if distance < 0.5 and cos_angle > 0.99:
+            transparency_field.setSFFloat(0.0)
+            light_killer.getField("intensity").setSFFloat(5.0)
+
+            if not waiting_to_hide:
+                waiting_to_hide = True
+                wait_time = 0.0
+                print("Batterio individuato. Attesa per eliminazione.")
+
+            else:
+                wait_time += timestep / 1000.0
+
+                if wait_time >= wait_duration:
+                    bacteria_solid.getField('translation').setSFVec3f([1000, 1000, 1000])
+                    bacteria_hidden = True
+                    waiting_to_hide = False
+                    print("Batterio eliminato")
+
+        else:
+            waiting_to_hide = False
+            wait_time = 0.0
+            light_killer.getField("intensity").setSFFloat(0.0)
+            transparency_field.setSFFloat(1.0)
+
+    else:
+        light_killer.getField("intensity").setSFFloat(0.0)
