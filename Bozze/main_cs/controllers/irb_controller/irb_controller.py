@@ -20,7 +20,7 @@ with tempfile.NamedTemporaryFile(suffix='.urdf', delete=False) as file:
     file.write(supervisor.getUrdf().encode('utf-8'))
 
 # Initialize the arm chain using the URDF file
-chain = Chain.from_urdf_file(filename, active_links_mask=[False, True, True, True, True, True, True, False])
+chain = Chain.from_urdf_file(filename, active_links_mask=[False, True, True, True, True, True, True, False, False])
 
 # Initialize the arm motors and encoders.
 motors = []
@@ -52,7 +52,7 @@ while supervisor.step(timeStep) != -1:
     z = targetPosition[2] - armPosition[2]
 
     # Calculate the inverse kinematics of the arm.
-    initial_position = [0] + [m.getPositionSensor().getValue() for m in motors] + [0]
+    initial_position = [0] + [m.getPositionSensor().getValue() for m in motors] + [0,0]
     ikResults = chain.inverse_kinematics([x, y, z], max_iter=IKPY_MAX_ITERATIONS, initial_position=initial_position)
 
     # Actuate the arm motors with the IK results.

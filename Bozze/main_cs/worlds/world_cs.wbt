@@ -13,13 +13,13 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/hospital/protos/HandSanitizer.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/hospital/protos/Curtain.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/robots/abb/irb/protos/Irb4600-40.proto"
-EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/appearances/protos/BrushedAluminium.proto"
+EXTERNPROTO "../protos/EndEffectorBase.proto"
 
 WorldInfo {
 }
 Viewpoint {
-  orientation -0.5300834576499941 0.6491455467579306 0.5455470530120883 1.9636337855059296
-  position -0.49086638142867245 0.19286846653454048 21.88763169802375
+  orientation -0.14320873882676008 0.4426608954770518 0.8851794104807814 0.700821574518886
+  position -5.529285874041845 -2.8386858255511696 4.889271295306504
 }
 TexturedBackground {
 }
@@ -36,44 +36,10 @@ Irb4600-40 {
   rotation 0 0 1 -1.5707953071795862
   controller "irb_controller"
   supervisor TRUE
+  color 1 1 1
   handSlot [
-    Pen {
-      translation 0 0 0.02
-      rotation 0 1 0 3.14159
-      children [
-        Pose {
-          translation 0 0 0.05
-          children [
-            Shape {
-              appearance BrushedAluminium {
-                colorOverride 0 0.4131074998092622 0.9919279774166476
-              }
-              geometry Cylinder {
-                height 0.05
-                radius 0.04
-                subdivision 24
-              }
-            }
-          ]
-        }
-        Pose {
-          translation 0 0 0.04
-          children [
-            Shape {
-              appearance BrushedAluminium {
-                colorOverride 0 0 0
-              }
-              geometry Cylinder {
-                height 0.07
-                radius 0.01
-                subdivision 12
-              }
-            }
-          ]
-        }
-      ]
-      leadSize 0.01
-      maxDistance 0.05
+    EndEffectorBase {
+      translation 0 0 -0.06
     }
   ]
   staticBase TRUE
