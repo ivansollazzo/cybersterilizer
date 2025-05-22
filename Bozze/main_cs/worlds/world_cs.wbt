@@ -18,8 +18,8 @@ EXTERNPROTO "../protos/EndEffectorBase.proto"
 WorldInfo {
 }
 Viewpoint {
-  orientation -0.14320873882676008 0.4426608954770518 0.8851794104807814 0.700821574518886
-  position -5.529285874041845 -2.8386858255511696 4.889271295306504
+  orientation -0.16326497539721677 -0.3699832181553011 0.9145802130442103 5.3841175527683305
+  position -4.526750908078494 4.870641561681642 3.0813607452419522
 }
 TexturedBackground {
 }
@@ -32,12 +32,23 @@ RectangleArena {
   }
 }
 Irb4600-40 {
-  translation -0.03 1.59998 0
+  translation -0.02 1.59998 0
   rotation 0 0 1 -1.5707953071795862
   controller "irb_controller"
   supervisor TRUE
   color 1 1 1
   handSlot [
+    Display {
+      width 1920
+      height 1080
+    }
+    Camera {
+      translation -3.34414e-07 1.81558e-06 0.02
+      rotation 0.5773502691896258 0.5773502691896258 0.5773502691896258 -2
+      fieldOfView 1.7
+      width 1920
+      height 1080
+    }
     EndEffectorBase {
       translation 0 0 -0.06
     }
@@ -58,7 +69,8 @@ DripStand {
   translation 0.79 -0.96 0
 }
 DEF ARUCO_1 Solid {
-  translation 0.11 0 0.59
+  translation 0.11 -0.00258815 0.580341
+  rotation 1 0 0 -0.261795307179586
   children [
     Shape {
       appearance PBRAppearance {
@@ -76,7 +88,8 @@ DEF ARUCO_1 Solid {
   ]
 }
 DEF ARUCO_2 Solid {
-  translation -0.11 0 0.59
+  translation -0.11 -0.00258815 0.580341
+  rotation 1 0 0 -0.261795307179586
   children [
     Shape {
       appearance PBRAppearance {
