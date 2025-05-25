@@ -18,8 +18,9 @@ EXTERNPROTO "../protos/EndEffectorBase.proto"
 WorldInfo {
 }
 Viewpoint {
-  orientation 0.0483562541170595 -0.9775611894645415 -0.20502632401825147 5.809640368313924
-  position -5.525952964969439 0.7137869387380401 3.47912268446251
+  orientation -0.03042392495648788 0.9825063693303715 0.18372702309538788 0.3340374620439332
+  position -5.965756016155335 -1.1419772756320707 3.42472993148022
+  exposure 0.3
 }
 TexturedBackground {
 }
@@ -31,6 +32,8 @@ RectangleArena {
     type "light strip"
   }
 }
+DEF BacteriaGroup Group {
+}
 Irb4600-40 {
   translation -0.02 1.73998 0
   rotation 0 0 1 -1.5707953071795862
@@ -38,19 +41,51 @@ Irb4600-40 {
   supervisor TRUE
   color 1 1 1
   handSlot [
+    DEF killer Solid {
+      translation 0.02 -0.01 0.03
+      rotation 1 0 0 -1.3089953071795861
+      children [
+        SpotLight {
+          attenuation 0 0 5
+          beamWidth 0.02
+          color 0.333 1 1
+          cutOffAngle 0.02
+          direction -0.08 -1.46 0.38
+          intensity 15
+        }
+      ]
+      name "solid(2)"
+    }
+    DEF UVDetector Solid {
+      translation -0.02 -0.01 0.03
+      rotation 1 0 0 -1.3089953071795861
+      children [
+        SpotLight {
+          attenuation 0 0 5
+          beamWidth 0.02
+          color 1 0 1
+          cutOffAngle 0.02
+          direction 0.08 -1.46 0.38
+          intensity 40
+          castShadows TRUE
+        }
+      ]
+      name "solid(1)"
+    }
     Display {
       width 1920
       height 1080
     }
     Camera {
-      translation -3.34414e-07 1.81558e-06 0.02
-      rotation 0.5773502691896258 0.5773502691896258 0.5773502691896258 -2
-      fieldOfView 1.7
+      translation -0.000101912 0.0200525 0.020051
+      rotation 0.5773519358547601 0.5773499358549823 0.5773489358550934 -1.98
+      fieldOfView 1
       width 1920
       height 1080
     }
-    EndEffectorBase {
+    DEF EndEffectorBase EndEffectorBase {
       translation 0 0 -0.06
+      rotation 0 0 1 -1.5707953071795862
     }
   ]
   staticBase TRUE
@@ -69,7 +104,7 @@ DripStand {
   translation 0.79 -0.96 0
 }
 DEF ARUCO_1 Solid {
-  translation 0.11 -0.00258815 0.580341
+  translation 0.08 -0.0702032 0.598457
   rotation 1 0 0 -0.261795307179586
   children [
     Shape {
@@ -88,7 +123,7 @@ DEF ARUCO_1 Solid {
   ]
 }
 DEF ARUCO_2 Solid {
-  translation -0.11 -0.00258815 0.580341
+  translation -0.09 -0.0702032 0.598457
   rotation 1 0 0 -0.261795307179586
   children [
     Shape {
@@ -108,7 +143,7 @@ DEF ARUCO_2 Solid {
   name "solid(1)"
 }
 DEF ARUCO_3 Solid {
-  translation -0.11 -0.24 0.62
+  translation -0.09 -0.24 0.62
   children [
     Shape {
       appearance PBRAppearance {
@@ -128,7 +163,7 @@ DEF ARUCO_3 Solid {
   name "solid(2)"
 }
 DEF ARUCO_4 Solid {
-  translation 0.11 -0.24 0.62
+  translation 0.08 -0.24 0.62
   children [
     Shape {
       appearance PBRAppearance {

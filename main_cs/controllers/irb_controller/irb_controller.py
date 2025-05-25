@@ -7,9 +7,14 @@ import tempfile
 import math
 import cv2
 import cv2.aruco as aruco
+from scipy.spatial.transform import Rotation as R
+import random
 
 # Constants
 IKPY_MAX_ITERATIONS = 4
+
+# UV light direction in Webots coordinates (calculated as the mean of the UV detector's direction and the light killer's direction)
+LIGHT_DIRECTION = np.array([0, -1.45, 0.38])
 
 # Initialize the Webots Supervisor and calculate the time step.
 supervisor = Supervisor()
@@ -43,7 +48,8 @@ arm = supervisor.getSelf()
 # Initialize the camera
 camera = supervisor.getDevice('camera')
 camera.enable(timeStep)
-
+uv_detector = supervisor.getFromDef("UVDetector")
+light_killer = supervisor.getFromDef("killer")
 # Calculate camera parameters
 img_width, img_height = camera.getWidth(), camera.getHeight()
 fov = camera.getFov()
@@ -236,17 +242,9 @@ def print_cell_table(cam_centers, world_centers):
         w = world_centers[key]
         print(f"({key[0]},{key[1]})        |{c[0]:8.3f}{c[1]:8.3f}{c[2]:8.3f} ||{w[0]:8.3f}{w[1]:8.3f}{w[2]:8.3f}")
 
-# Store the current state of the arm
-STANDBY, DETECTING, MONITORING, STERILIZING = range(4)
-current_state = STANDBY
+def convert_webots_to_robot_coordinates(targetPosition):
 
-# Store the position of the cells
-world_cells_centers = []
-
-# Function to move the arm to a target position
-def move_to_target(targetPosition):
-    
-    # Get the absolute postion of the target and the arm base.
+    # Get the arm position in Webots coordinates.
     armPosition = arm.getPosition()
 
     # Compute the position of the target relatively to the arm.
@@ -255,6 +253,15 @@ def move_to_target(targetPosition):
     y = targetPosition[0] - armPosition[0]
     z = targetPosition[2] - armPosition[2]
 
+    return [x, y, z]
+
+# Function to move the arm to a target position
+def move_to_target(targetPosition):
+
+    # Compute the position of the target relatively to the arm.
+    # x and y axis are inverted because the arm is not aligned with theWebots global axes.
+    x, y, z = convert_webots_to_robot_coordinates(targetPosition)
+
     # Calculate the inverse kinematics of the arm.
     initial_position = [0] + [m.getPositionSensor().getValue() for m in motors] + [0,0]
     ikResults = chain.inverse_kinematics([x, y, z], max_iter=IKPY_MAX_ITERATIONS,   initial_position=initial_position)
@@ -262,12 +269,88 @@ def move_to_target(targetPosition):
     # Actuate the arm motors with the IK results.
     for i in range(len(motors)):
         motors[i].setPosition(ikResults[i + 1])
-        
-    # Check if the arm has reached the target position.
-    if all(abs(m.getPositionSensor().getValue() - ikResults[i + 1]) < 0.01 for i, m in enumerate(motors)):
-        return True
+
+def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
+    """
+    Spawna batteri casualmente nelle celle della griglia.
     
-    return False
+    Args:
+        world_centers: dict - centri delle celle
+        num_bacteria: int - numero di batteri da spawnare
+    """
+    if not world_centers:
+        print("No cell centers available for bacteria spawning!")
+        return
+        
+    bacteria_group = supervisor.getFromDef("BacteriaGroup")
+    if not bacteria_group:
+        print("BacteriaGroup not found!")
+        return
+        
+    group_field = bacteria_group.getField("children")
+
+    bacteria_proto = """
+    Solid {
+      translation 0 0 0
+      children [
+        Shape {
+          appearance Appearance {
+            material Material {
+              diffuseColor 0.8 0.1 0.1
+              transparency 0.0
+            }
+          }
+          geometry Sphere {
+            radius 0.005
+          }
+        }
+      ]
+      name "bacteria"
+      boundingObject Sphere {
+        radius 0.005
+      }
+    }
+    """
+    
+    # Spawna batteri in posizioni casuali vicino ai centri delle celle
+    cell_positions = list(world_centers.values())
+    
+    for _ in range(num_bacteria):
+        # Scegli una cella casuale
+        base_position = random.choice(cell_positions)
+        
+        # Aggiungi un piccolo offset casuale
+        offset = np.array([
+            random.uniform(-0.02, 0.02),  # ±2cm in x
+            random.uniform(-0.02, 0.02),  # ±2cm in y
+            random.uniform(0, 0.01)       # 0-1cm in z (sopra la superficie)
+        ])
+        
+        bacteria_position = base_position + offset
+        
+        # Spawna il batterio
+        group_field.importMFNodeFromString(-1, bacteria_proto)
+        node = group_field.getMFNode(group_field.getCount() - 1)
+        node.getField("translation").setSFVec3f(bacteria_position.tolist())
+        
+    print(f"Spawned {num_bacteria} bacteria in the grid cells")
+
+def get_bacteria_positions():
+    """Restituisce una lista delle posizioni dei batteri nel mondo."""
+    positions = []
+    bacteria_group = supervisor.getFromDef("BacteriaGroup")
+    if not bacteria_group:
+        return positions
+    
+    children_field = bacteria_group.getField("children")
+    count = children_field.getCount()
+
+    for i in range(count):
+        node = children_field.getMFNode(i)
+        if node and node.getField("translation"):
+            positions.append((node, np.array(node.getField("translation").getSFVec3f(), dtype=np.float32)))
+
+    return positions
 
 def detect_markers():
 
@@ -276,6 +359,8 @@ def detect_markers():
 
     # Detect and draw ArUco
     img, corners, ids = detect_and_draw_markers(raw)
+    cam_centers = {}
+    world_centers = {}
     
     if ids is not None and len(ids) >= 4:
         
@@ -295,23 +380,6 @@ def detect_markers():
         # Interpolate 3D centers
         cam_centers   = interpolate_cam_centers(centers2d, rows, cols)
         world_centers = interpolate_world_centers(quad_ids, rows, cols)
-        
-        # Store the world centers of the cells
-        world_cells_centers.clear()
-        
-        for val in world_centers.values():
-            world_cells_centers.append(val)
-
-        '''
-        # Print tables
-        print_marker_table()
-        print(f"Grid size: {rows}x{cols}  (target cell area{CELL_AREA_TARGET} cm^2)")
-        print_cell_table(cam_centers, world_centers)
-        
-        # Print overall grid center
-        wc = compute_world_center()
-        print(f"World Grid Center: {wc[0]:.3f}, {wc[1]:.3f}, {wc[2]:.3f}")
-        '''
 
     # Update display
     img_bgra = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
@@ -321,24 +389,91 @@ def detect_markers():
     display.imagePaste(ir, 0, 0, False)
     display.imageDelete(ir)
 
+    # Update display
+    img_bgra = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+    img_buffer = img_bgra.tobytes()
+    
+    ir = display.imageNew(img_buffer, display.BGRA, img_width, img_height)
+    display.imagePaste(ir, 0, 0, False)
+    display.imageDelete(ir)
+
+    return cam_centers, world_centers
+
+def check_if_moved(targetPosition):
+
+    # Get the current joint angles
+    current_joint_angles = [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0]
+
+    # Calculate the forward kinematics and get the position vector
+    fk = chain.forward_kinematics(current_joint_angles)
+    current_position = fk[0:3, 3]
+
+    # Convert the target position to robot coordinates
+    target_position_robot = convert_webots_to_robot_coordinates(targetPosition)
+
+    # Calculate the squared distance between the current position and the target position
+    squared_distance = (current_position[0] - target_position_robot[0])**2 + \
+                       (current_position[1] - target_position_robot[1])**2 + \
+                       (current_position[2] - target_position_robot[2])**2
+    # Check if the distance is greater than a threshold (e.g., 0.01)
+    if math.sqrt(squared_distance) < 0.01:
+        return True
+    
+    return False
+
+# Store the current state of the arm
+STANDBY, DETECTING, MONITORING, STERILIZING = range(4)
+current_state = STANDBY
+cam_centers = {}
+world_centers = {}
+current_cell_index = 0
+timestep_sum = 0
+
+# Store the current state of the world
+bacteria_spawned = False
+
 # Main loop
 while supervisor.step(timeStep) != -1:
 
     if current_state == STANDBY:
         current_state = DETECTING
-    
+
     elif current_state == DETECTING:
         
-        # Move to target position
-        moved = move_to_target([0, 0.12, 1])
+        target_position = [0, 0.108, 1]
 
-        if moved:
-            detect_markers()
-            current_state = MONITORING
+        move_to_target(target_position)
+        
+        if check_if_moved(target_position):
+            cam_centers, world_centers = detect_markers()
+
+            if not bacteria_spawned:
+                spawn_bacteria_in_cells(world_centers, num_bacteria=5)
+                bacteria_spawned = True
+
+                # Switch to MONITORING state
+                current_state = MONITORING
 
     elif current_state == MONITORING:
-        #move_to_target([0.088, -0.21032351, 1])
-        pass
+
+        if len(world_centers) > 0 and current_cell_index < len(world_centers): 
+            # Move to the next target position
+            next_target = list(world_centers.values())[current_cell_index]
+            next_target_adj = [next_target[0], next_target[1] + 0.07, next_target[2] + 0.1]
+            move_to_target(next_target_adj)
+
+            if check_if_moved(next_target_adj):
+                current_state = STERILIZING
+        else:
+            current_state = STANDBY
 
     elif current_state == STERILIZING:
-        pass
+        
+        if timestep_sum >= timeStep * 5:
+            current_cell_index += 1
+            timestep_sum = 0
+            current_state = MONITORING
+        else:
+            # Simulate sterilization by printing a message
+            print(f"Sterilizing cell {current_cell_index} at position {list(world_centers.values())[current_cell_index]}")
+            timestep_sum += timeStep
