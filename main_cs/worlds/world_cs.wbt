@@ -18,8 +18,8 @@ EXTERNPROTO "../protos/EndEffectorBase.proto"
 WorldInfo {
 }
 Viewpoint {
-  orientation -0.03042392495648788 0.9825063693303715 0.18372702309538788 0.3340374620439332
-  position -5.965756016155335 -1.1419772756320707 3.42472993148022
+  orientation -0.17771164463526226 0.8298608084348724 0.5289136129698784 0.769427572972581
+  position -6.633413520482122 -3.3340508967700253 6.199935452694019
   exposure 0.3
 }
 TexturedBackground {
@@ -79,7 +79,7 @@ Irb4600-40 {
     Camera {
       translation -0.000101912 0.0200525 0.020051
       rotation 0.5773519358547601 0.5773499358549823 0.5773489358550934 -1.98
-      fieldOfView 1
+      fieldOfView 1.1
       width 1920
       height 1080
     }
@@ -104,7 +104,7 @@ DripStand {
   translation 0.79 -0.96 0
 }
 DEF ARUCO_1 Solid {
-  translation 0.08 -0.0702032 0.598457
+  translation 0.08 -0.0798625 0.601045
   rotation 1 0 0 -0.261795307179586
   children [
     Shape {
@@ -123,7 +123,7 @@ DEF ARUCO_1 Solid {
   ]
 }
 DEF ARUCO_2 Solid {
-  translation -0.09 -0.0702032 0.598457
+  translation -0.09 -0.0798625 0.601045
   rotation 1 0 0 -0.261795307179586
   children [
     Shape {
@@ -143,7 +143,7 @@ DEF ARUCO_2 Solid {
   name "solid(1)"
 }
 DEF ARUCO_3 Solid {
-  translation -0.09 -0.24 0.62
+  translation -0.09 -0.31 0.62
   children [
     Shape {
       appearance PBRAppearance {
@@ -163,7 +163,7 @@ DEF ARUCO_3 Solid {
   name "solid(2)"
 }
 DEF ARUCO_4 Solid {
-  translation 0.08 -0.24 0.62
+  translation 0.08 -0.31 0.62
   children [
     Shape {
       appearance PBRAppearance {

@@ -8,6 +8,7 @@ import math
 import cv2
 import cv2.aruco as aruco
 from scipy.spatial.transform import Rotation as R
+from roboticstoolbox.tools.trajectory import jtraj
 import random
 
 # Constants
@@ -266,9 +267,12 @@ def move_to_target(targetPosition):
     initial_position = [0] + [m.getPositionSensor().getValue() for m in motors] + [0,0]
     ikResults = chain.inverse_kinematics([x, y, z], max_iter=IKPY_MAX_ITERATIONS,   initial_position=initial_position)
 
-    # Actuate the arm motors with the IK results.
-    for i in range(len(motors)):
-        motors[i].setPosition(ikResults[i + 1])
+    # Plan the trajectory for the arm motors.
+    trajectory = jtraj(initial_position, ikResults, 100)
+
+    for pos in trajectory.q:
+        for i in range(len(motors)):
+            motors[i].setPosition(pos[i + 1])  # Skip the base joint (index 0) and end effector (index -2)
 
 def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
     """
