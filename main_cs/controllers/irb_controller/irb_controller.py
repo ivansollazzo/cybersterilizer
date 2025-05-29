@@ -66,8 +66,14 @@ arm = supervisor.getSelf()
 # Initialize the camera
 camera = supervisor.getDevice('camera')
 camera.enable(timeStep)
+
+# Initialize the UV Detector and light killer
 uv_detector = supervisor.getFromDef("UVDetector")
 light_killer = supervisor.getFromDef("killer")
+
+# Initialize bacteria group - AGGIUNTA PER INTEGRAZIONE
+bacteria_group = supervisor.getFromDef("BacteriaGroup")
+
 # Calculate camera parameters
 img_width, img_height = camera.getWidth(), camera.getHeight()
 fov = camera.getFov()
@@ -100,6 +106,13 @@ marker_defs = {
 # Initialize dictionaries to store camera and world positions of markers
 cam_positions = {i: np.zeros(3, np.float32) for i in marker_defs}
 world_positions = {i: np.zeros(3, np.float32) for i in marker_defs}
+
+# AGGIUNTA PER INTEGRAZIONE - Funzione wait_seconds dal secondo controllore
+def wait_seconds(seconds):
+    steps = int((seconds * 1000) / timeStep)  # Converti i secondi in step
+    for _ in range(steps):
+        if supervisor.step(timeStep) == -1:
+            break  # In caso di uscita dal simulatore
 
 # Function to update camera positions of markers
 def update_cam_positions(corners, ids):
@@ -273,17 +286,26 @@ def convert_webots_to_robot_coordinates(targetPosition):
 
     return [x, y, z]
 
-# Function to spawn bacteria in the grid cells
+# FUNZIONE MODIFICATA - Integrazione dal secondo controllore
 def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
-
+    """
+    Spawna batteri casualmente nelle celle della griglia.
+    
+    Args:
+        world_centers: dict - centri delle celle
+        num_bacteria: int - numero di batteri da spawnare
+    
+    Returns:
+        batterio_to_cella: dict - mappatura batterio-cella
+    """
     if not world_centers:
         print("No cell centers available for bacteria spawning!")
-        return
+        return {}
         
     bacteria_group = supervisor.getFromDef("BacteriaGroup")
     if not bacteria_group:
         print("BacteriaGroup not found!")
-        return
+        return {}
         
     group_field = bacteria_group.getField("children")
 
@@ -295,11 +317,11 @@ def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
           appearance Appearance {
             material Material {
               diffuseColor 0.8 0.1 0.1
-              transparency 0.0
+              transparency 1.0
             }
           }
           geometry Sphere {
-            radius 0.005
+            radius 0.01
           }
         }
       ]
@@ -310,28 +332,35 @@ def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
     }
     """
     
-    # Spawna batteri in posizioni casuali vicino ai centri delle celle
-    cell_positions = list(world_centers.values())
-    
-    for _ in range(num_bacteria):
+    batterio_to_cella = {}  # Dizionario da popolare
+
+    cell_positions = list(world_centers.values())  # Ricava le posizioni in lista
+
+    for i in range(num_bacteria):
         # Scegli una cella casuale
-        base_position = random.choice(cell_positions)
-        
+        cell_index = random.randint(0, len(cell_positions) - 1)
+        base_position = cell_positions[cell_index]
+
         # Aggiungi un piccolo offset casuale
         offset = np.array([
             random.uniform(-0.02, 0.02),  # ±2cm in x
             random.uniform(-0.02, 0.02),  # ±2cm in y
-            random.uniform(0, 0.01)       # 0-1cm in z (sopra la superficie)
+            random.uniform(0, 0.01)       # 0–1cm in z
         ])
-        
+
         bacteria_position = base_position + offset
-        
+
         # Spawna il batterio
         group_field.importMFNodeFromString(-1, bacteria_proto)
         node = group_field.getMFNode(group_field.getCount() - 1)
         node.getField("translation").setSFVec3f(bacteria_position.tolist())
-        
+
+        batterio_to_cella[cell_index] = i    
+
     print(f"Spawned {num_bacteria} bacteria in the grid cells")
+    print("Mappa batterio → cella:", batterio_to_cella)
+
+    return batterio_to_cella
 
 # Function to get the positions of all bacteria in the world
 def get_bacteria_positions():
@@ -350,6 +379,42 @@ def get_bacteria_positions():
             positions.append((node, np.array(node.getField("translation").getSFVec3f(), dtype=np.float32)))
 
     return positions
+
+def findContours():
+    # Ottieni l'immagine dalla camera
+    raw_image = camera.getImage()
+    img_bgra = np.frombuffer(raw_image, np.uint8).reshape(img_height, img_width, 4)
+    img_bgr = cv2.cvtColor(img_bgra, cv2.COLOR_BGRA2BGR)
+
+    # --- RILEVAMENTO BATTERI ROSSI ---
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    lower_red1 = np.array([0, 100, 100])
+    upper_red1 = np.array([10, 255, 255])
+    lower_red2 = np.array([160, 100, 100])
+    upper_red2 = np.array([179, 255, 255])
+    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    mask = cv2.bitwise_or(mask1, mask2)
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    # Trova contorni dei batteri
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+   
+
+    # --- VISUALIZZAZIONE ---
+    display.setColor(0x0000FF)  # verde
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        # Disegniamo 6 rettangoli concentrici per spessore spesso
+        for thickness in range(6):
+            display.drawRectangle(x - thickness, y - thickness, w + 2*thickness, h + 2*thickness)
+
+        # Opzionale: disegna un cerchio al centro del box
+        center_x = x + w // 2
+        center_y = y + h // 2
+        radius = max(w, h) // 10  # dimensione proporzionale
+        display.drawOval(center_x - radius, center_y - radius, 2*radius, 2*radius)
 
 # Function to update the Webots display with a given BGR image
 def _update_display(image_bgr_to_show):
@@ -440,6 +505,9 @@ timestep_sum = 0
 # Store the current state of the world
 bacteria_spawned = False
 
+# AGGIUNTA PER INTEGRAZIONE - Mappatura batterio-cella
+batteri_dict = {}
+
 # Variables for trajectory management
 active_trajectory = None
 trajectory_step_index = 0
@@ -468,6 +536,7 @@ while supervisor.step(timeStep) != -1:
         world_centers = {}
         current_cell_index = 0
         bacteria_spawned = False # Reset bacteria spawning status
+        batteri_dict = {} # Reset bacteria mapping
         
         # Optionally, turn off light_killer if it could be on
         # light_killer.set(0) 
@@ -484,6 +553,37 @@ while supervisor.step(timeStep) != -1:
     image_to_display_bgr, _, _ = detect_and_draw_markers(raw_camera_image_buffer)
 
     if current_state == STANDBY:
+
+        # Killer spotlight logic
+        killer_spotlight = supervisor.getFromDef("killerspotlight")
+
+        if killer_spotlight is None:
+            print("Errore: nodo 'killerspotlight' non trovato.")
+        else:
+            # Ottieni il campo intensity
+            intensitykiller_field = killer_spotlight.getField("intensity")
+            if intensitykiller_field is None:
+                print("Errore: campo 'intensity' non trovato in 'killerspotlight'.")
+            else:
+                # Imposta l'intensità a 0
+                intensitykiller_field.setSFFloat(0.0)
+                print("Intensità impostata a 0.")
+        
+        # Detector spotlight logic
+        detector_spotlight = supervisor.getFromDef("detectorspotlight")
+
+        if detector_spotlight is None:
+            print("Errore: nodo 'detectorspotlight' non trovato.")
+        else:
+            # Get the field intensity
+            intensitydetector_field = detector_spotlight.getField("intensity")
+
+            if intensitydetector_field is None:
+                print("Errore: campo 'intensity' non trovato in 'detectorspotlight'.")
+            else:
+                # Set the intensity to 0
+                intensitydetector_field.setSFFloat(0.0)
+                print("Intensità impostata a 0.")
         
         # If no active trajectory, show the standby prompt only once
         if not active_trajectory:
@@ -574,9 +674,9 @@ while supervisor.step(timeStep) != -1:
             active_trajectory = None # Ensure no trajectory active
             continue
 
-        # Bacteria spawning logic remains, but confirmation comes after
+        # MODIFICATA - Bacteria spawning logic con mappatura
         if not bacteria_spawned:
-            spawn_bacteria_in_cells(world_centers, num_bacteria=5) 
+            batteri_dict = spawn_bacteria_in_cells(world_centers, num_bacteria=5) 
             bacteria_spawned = True
         
         # Transition to awaiting confirmation instead of directly to monitoring
@@ -686,15 +786,109 @@ while supervisor.step(timeStep) != -1:
                 print(f"Waiting to arrive at cell {current_cell_index}...")
 
     elif current_state == STERILIZING_CELL:
-
         print(f"Sterilizing cell {current_cell_index} at position {list(world_centers.values())[current_cell_index]}")
-        timestep_sum += timeStep
         
-        if timestep_sum >= timeStep * 5: # Sterilization duration (5 timesteps)
-            current_cell_index += 1
-            timestep_sum = 0
-            current_state = MONITORING_SELECT_CELL # Go to next cell
-            print(f"Sterilization of cell {current_cell_index-1} complete. Checking for next cell.")
+        # --- NUOVA LOGICA DI RILEVAMENTO BATTERI INTEGRATA DAL SECONDO CONTROLLORE ---
+        
+        # Ottieni riferimenti alle luci spotlight
+        detector_spotlight = supervisor.getFromDef("detectorspotlight")
+        killer_spotlight = supervisor.getFromDef("killerspotlight")
+        
+        if detector_spotlight:
+            intensitydetector_field = detector_spotlight.getField("intensity")
+        if killer_spotlight:
+            intensitykiller_field = killer_spotlight.getField("intensity")
+        
+        # Ottieni il campo "children" dal nodo Group
+        children_field = bacteria_group.getField("children")
+
+        # Ottieni batteri presenti nella cella
+        valore = batteri_dict.get(current_cell_index, [])
+        if isinstance(valore, int):
+            batteri_presenti = [valore]
+        else:
+            batteri_presenti = valore
+
+        # FASE 1: RILEVAMENTO
+        if len(batteri_presenti) > 0:
+            print(f"Batteri rilevati nella cella {current_cell_index}: {batteri_presenti}")
+            
+            # Accendi luce detector per il rilevamento
+            if detector_spotlight and intensitydetector_field:
+                intensitydetector_field.setSFFloat(20.0)
+            
+            # Rendi visibili i batteri gradualmente
+            for i in batteri_presenti:
+                if i < children_field.getCount():  # Verifica che l'indice sia valido
+                    bacterium = children_field.getMFNode(i)
+                    if bacterium:
+                        shape_node = bacterium.getField("children").getMFNode(0)
+                        appearance_node = shape_node.getField("appearance").getSFNode()
+                        material_node = appearance_node.getField("material").getSFNode()
+                        transparency_field = material_node.getField("transparency")
+                        
+                        for step in range(101):
+                            # Aggiorna la trasparenza per rendere visibile il batterio
+                            transparency = 1.0 - (step / 100)
+                            transparency_field.setSFFloat(transparency)
+                            supervisor.step(timeStep)
+
+            # Rileva i contorni dei batteri
+            findContours()
+            
+            # Attendi 3 secondi con rilevamento attivo
+            wait_steps = int(3000 / timeStep)
+            for _ in range(wait_steps):
+                supervisor.step(timeStep)
+
+            # FASE 2: STERILIZZAZIONE
+            print(f"Iniziando sterilizzazione nella cella {current_cell_index}")
+            
+            # Spegni luce detector e accendi luce killer
+            if detector_spotlight and intensitydetector_field:
+                intensitydetector_field.setSFFloat(0.0)
+            if killer_spotlight and intensitykiller_field:
+                intensitykiller_field.setSFFloat(20.0)
+                
+            # Attendi 3 secondi per la sterilizzazione
+            wait_steps = int(3000 / timeStep)
+            for _ in range(wait_steps):
+                supervisor.step(timeStep)
+
+            # Rendi i batteri invisibili (sterilizzati)
+            for i in batteri_presenti:
+                if i < children_field.getCount():  # Verifica che l'indice sia valido
+                    bacterium = children_field.getMFNode(i)
+                    if bacterium:
+                        shape_node = bacterium.getField("children").getMFNode(0)
+                        appearance_node = shape_node.getField("appearance").getSFNode()
+                        material_node = appearance_node.getField("material").getSFNode()
+                        transparency_field = material_node.getField("transparency")
+                        
+                        for step in range(101):
+                            transparency = step / 100.0  # va da 0.0 a 1.0
+                            transparency_field.setSFFloat(transparency)
+                            supervisor.step(timeStep)
+            
+            # Spegni luce killer
+            if killer_spotlight and intensitykiller_field:
+                intensitykiller_field.setSFFloat(0.0)
+                        
+            print(f"Sterilizzazione batteri completata nella cella {current_cell_index}")
+        else:
+            print(f"Nessun batterio nella cella {current_cell_index}, salto sterilizzazione.")
+            # Attendi comunque un po' per simulare il processo
+            wait_steps = int(1000 / timeStep)
+            for _ in range(wait_steps):
+                supervisor.step(timeStep)
+        
+        # --- FINE NUOVA LOGICA ---
+        
+        # Passa alla cella successiva
+        current_cell_index += 1
+        timestep_sum = 0
+        current_state = MONITORING_SELECT_CELL # Go to next cell
+        print(f"Sterilization of cell {current_cell_index-1} complete. Checking for next cell.")
     
     # At the end of each loop iteration, update the display with the chosen image_to_display_bgr
     _update_display(image_to_display_bgr)
