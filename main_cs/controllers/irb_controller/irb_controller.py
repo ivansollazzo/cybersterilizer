@@ -28,7 +28,8 @@ with tempfile.NamedTemporaryFile(suffix='.urdf', delete=False) as file:
     file.write(supervisor.getUrdf().encode('utf-8'))
 
 # Initialize the arm chain using the URDF file
-chain = Chain.from_urdf_file(filename, active_links_mask=[False, True, True, True, True, True, True, False, False])
+end_effector_offset = [0, 0, 0.5]
+chain = Chain.from_urdf_file(filename, last_link_vector=end_effector_offset, active_links_mask=[False, True, True, True, True, True, True, False, False, False])
 
 # Initialize the arm motors and encoders.
 motors = []
@@ -264,7 +265,7 @@ def move_to_target(targetPosition):
     x, y, z = convert_webots_to_robot_coordinates(targetPosition)
 
     # Calculate the inverse kinematics of the arm.
-    initial_position = [0] + [m.getPositionSensor().getValue() for m in motors] + [0,0]
+    initial_position = [0] + [m.getPositionSensor().getValue() for m in motors] + [0,0,0]
     ikResults = chain.inverse_kinematics([x, y, z], max_iter=IKPY_MAX_ITERATIONS,   initial_position=initial_position)
 
     # Plan the trajectory for the arm motors.
@@ -407,7 +408,7 @@ def detect_markers():
 def check_if_moved(targetPosition):
 
     # Get the current joint angles
-    current_joint_angles = [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0]
+    current_joint_angles = [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
 
     # Calculate the forward kinematics and get the position vector
     fk = chain.forward_kinematics(current_joint_angles)
@@ -467,7 +468,7 @@ while supervisor.step(timeStep) != -1:
         if len(world_centers) > 0 and current_cell_index < len(world_centers): 
             # Move to the next target position
             next_target = list(world_centers.values())[current_cell_index]
-            next_target_adj = [next_target[0], next_target[1] + 0.08, next_target[2] + 0.2]
+            next_target_adj = [next_target[0], next_target[1], next_target[2]]
             move_to_target(next_target_adj)
 
             if check_if_moved(next_target_adj):
