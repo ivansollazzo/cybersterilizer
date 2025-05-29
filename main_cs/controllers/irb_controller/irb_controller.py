@@ -8,18 +8,34 @@ import math
 import cv2
 import cv2.aruco as aruco
 from scipy.spatial.transform import Rotation as R
-from roboticstoolbox.tools.trajectory import jtraj
 import random
 
-# Constants
-IKPY_MAX_ITERATIONS = 4
+# Check if numpy has the disp function, if not, define it
+if not hasattr(np, 'disp'):
+    np.disp = lambda x, *args, **kwargs: print(x, *args, **kwargs)
 
-# UV light direction in Webots coordinates (calculated as the mean of the UV detector's direction and the light killer's direction)
-LIGHT_DIRECTION = np.array([0, -1.45, 0.38])
+#Now we can import the Robotics Toolbox for Python
+from roboticstoolbox.tools.trajectory import jtraj
+
+# Constants
+IKPY_MAX_ITERATIONS = 100 # Increased for better accuracy
+
+# Target orientation for the end-effector (pointing straight down)
+# Assumes robot base Z is up, end-effector Z is tool direction.
+# This matrix represents a 180-degree rotation around the base X-axis.
+target_orientation_matrix_down = np.array([
+    [1,  0,  0],  # End-effector X-axis aligned with robot base X-axis
+    [0, -1,  0],  # End-effector Y-axis aligned with robot base -Y-axis
+    [0,  0, -1]   # End-effector Z-axis aligned with robot base -Z-axis (pointing down)
+])
 
 # Initialize the Webots Supervisor and calculate the time step.
 supervisor = Supervisor()
 timeStep = int(4 * supervisor.getBasicTimeStep())
+
+# Enable keyboard input
+keyboard = supervisor.getKeyboard()
+keyboard.enable(timeStep)
 
 # Create the arm chain from the URDF
 filename = None
@@ -28,7 +44,7 @@ with tempfile.NamedTemporaryFile(suffix='.urdf', delete=False) as file:
     file.write(supervisor.getUrdf().encode('utf-8'))
 
 # Initialize the arm chain using the URDF file
-end_effector_offset = [0, 0, 0.5]
+end_effector_offset = [0.0, 0.0, 0.5]
 chain = Chain.from_urdf_file(filename, last_link_vector=end_effector_offset, active_links_mask=[False, True, True, True, True, True, True, False, False, False])
 
 # Initialize the arm motors and encoders.
@@ -257,33 +273,28 @@ def convert_webots_to_robot_coordinates(targetPosition):
 
     return [x, y, z]
 
-# Function to move the arm to a target position
+# Function to move the arm to a target position with an optional offset
 def move_to_target(targetPosition):
 
-    # Compute the position of the target relatively to the arm.
-    # x and y axis are inverted because the arm is not aligned with theWebots global axes.
-    x, y, z = convert_webots_to_robot_coordinates(targetPosition)
+    # Convert Webots global target to robot base frame
+    new_target = convert_webots_to_robot_coordinates(targetPosition)
 
-    # Calculate the inverse kinematics of the arm.
-    initial_position = [0] + [m.getPositionSensor().getValue() for m in motors] + [0,0,0]
-    ikResults = chain.inverse_kinematics([x, y, z], max_iter=IKPY_MAX_ITERATIONS,   initial_position=initial_position)
+    # Get current joint positions as initial guess
+    initial_position = [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
 
-    # Plan the trajectory for the arm motors.
+    # Inverse kinematics to reach the new target with offset
+    ikResults = chain.inverse_kinematics(new_target, max_iter=IKPY_MAX_ITERATIONS, initial_position=initial_position)
+
+    # Plan the joint-space trajectory
     trajectory = jtraj(initial_position, ikResults, 100)
 
+    # Execute the trajectory
     for pos in trajectory.q:
         for i in range(len(motors)):
             motors[i].setPosition(pos[i + 1])
-            motors[3].setPosition(0.0)
 
 def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
-    """
-    Spawna batteri casualmente nelle celle della griglia.
-    
-    Args:
-        world_centers: dict - centri delle celle
-        num_bacteria: int - numero di batteri da spawnare
-    """
+
     if not world_centers:
         print("No cell centers available for bacteria spawning!")
         return
@@ -358,52 +369,52 @@ def get_bacteria_positions():
 
     return positions
 
-def detect_markers():
+# Function to update the Webots display with a given BGR image
+def _update_display(image_bgr_to_show):
+    img_bgra = cv2.cvtColor(image_bgr_to_show, cv2.COLOR_BGR2BGRA)
+    img_buffer = img_bgra.tobytes()
+    # Basic check to ensure display is somewhat valid before using
+    if display.getWidth() > 0 and display.getHeight() > 0:
+        ir = display.imageNew(img_buffer, display.BGRA, img_width, img_height)
+        if ir: # Check if imageNew was successful
+            display.imagePaste(ir, 0, 0, False)
+            display.imageDelete(ir)
+        # else:
+            # print("Debug: display.imageNew failed") # Optional for debugging
+    # else:
+        # print("Debug: display not properly initialized or has zero dimensions") # Optional for debugging
 
-    # Get the camera image
-    raw = camera.getImage()
-
-    # Detect and draw ArUco
-    img, corners, ids = detect_and_draw_markers(raw)
-    cam_centers = {}
-    world_centers = {}
+# This function processes the raw camera image to detect markers, draw them,
+# calculate grid and cell centers, and returns the annotated image and centers.
+def run_detection_and_get_annotated_image(raw_camera_image_buffer):
+    # Get BGR image with basic ArUco markers drawn from the raw camera buffer
+    img_bgr_with_aruco, corners, ids = detect_and_draw_markers(raw_camera_image_buffer)
+    
+    # Initialize return values
+    final_annotated_image_bgr = img_bgr_with_aruco.copy() # Start with ArUco-drawn image
+    calculated_cam_centers = {}
+    calculated_world_centers = {}
     
     if ids is not None and len(ids) >= 4:
-        
-        # Update marker positions
+        # Update global marker positions (these are used by interpolation functions)
         update_world_positions()
         update_cam_positions(corners, ids)
         
-        # Sort quad corners and IDs
+        # Sort quad corners and IDs from the current detection
         quad_pts, quad_ids = sort_quad(corners, ids)
         
-        # Compute grid layout
+        # Compute grid layout (uses global world_positions which were just updated)
         rows, cols = compute_grid_dims()
         
-        # Overlay grid and get 2D centers
-        img, centers2d = draw_grid_overlay(img, quad_pts, rows, cols)
+        # Overlay grid on the image that already has ArUco markers
+        # draw_grid_overlay returns (image_with_grid_bgr, centers2d)
+        final_annotated_image_bgr, centers2d = draw_grid_overlay(final_annotated_image_bgr, quad_pts, rows, cols)
         
-        # Interpolate 3D centers
-        cam_centers   = interpolate_cam_centers(centers2d, rows, cols)
-        world_centers = interpolate_world_centers(quad_ids, rows, cols)
+        # Interpolate 3D cell centers (these use global cam_positions and world_positions)
+        calculated_cam_centers = interpolate_cam_centers(centers2d, rows, cols)
+        calculated_world_centers = interpolate_world_centers(quad_ids, rows, cols)
 
-    # Update display
-    img_bgra = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-    img_buffer = img_bgra.tobytes()
-    
-    ir = display.imageNew(img_buffer, display.BGRA, img_width, img_height)
-    display.imagePaste(ir, 0, 0, False)
-    display.imageDelete(ir)
-
-    # Update display
-    img_bgra = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-    img_buffer = img_bgra.tobytes()
-    
-    ir = display.imageNew(img_buffer, display.BGRA, img_width, img_height)
-    display.imagePaste(ir, 0, 0, False)
-    display.imageDelete(ir)
-
-    return cam_centers, world_centers
+    return final_annotated_image_bgr, calculated_cam_centers, calculated_world_centers
 
 def check_if_moved(targetPosition):
 
@@ -428,8 +439,11 @@ def check_if_moved(targetPosition):
     return False
 
 # Store the current state of the arm
-STANDBY, DETECTING, MONITORING, STERILIZING = range(4)
+# STANDBY, DETECTING, MONITORING, STERILIZING = range(4) # Old states
+# New states for more granular control over movement and actions
+STANDBY, MOVING_TO_DETECT_SPOT, DETECTING_AT_SPOT, AWAITING_CONFIRMATION, MONITORING_SELECT_CELL, MOVING_TO_CELL, STERILIZING_CELL = range(7)
 current_state = STANDBY
+
 cam_centers = {}
 world_centers = {}
 current_cell_index = 0
@@ -438,51 +452,247 @@ timestep_sum = 0
 # Store the current state of the world
 bacteria_spawned = False
 
+# Variables for trajectory management
+active_trajectory = None
+trajectory_step_index = 0
+g_target_for_check_if_moved = None # Stores the world coordinate target for check_if_moved
+
+# Flags to control one-time console messages
+standby_prompt_shown = False
+confirmation_prompt_shown = False
+
 # Main loop
 while supervisor.step(timeStep) != -1:
+    raw_camera_image_buffer = camera.getImage() # Get raw image data once per loop
+    key = keyboard.getKey()
+
+    # Global stop command ('x' key)
+    if key == ord('X') or key == ord('x'):
+        print("Stop command received ('x'). Returning to STANDBY.")
+        current_state = STANDBY
+        standby_prompt_shown = False # Ensure prompt shows on next STANDBY entry
+        confirmation_prompt_shown = False # Reset this flag as well
+        active_trajectory = None
+        trajectory_step_index = 0
+        g_target_for_check_if_moved = None
+        cam_centers = {}
+        world_centers = {}
+        current_cell_index = 0
+        bacteria_spawned = False # Reset bacteria spawning status
+        # Optionally, turn off light_killer if it could be on
+        # light_killer.set(0) 
+        print("Robot stopped and reset to STANDBY.")
+        # Clear remaining key presses for this step
+        while key != -1: key = keyboard.getKey()
+        # Continue to the next iteration to process the STANDBY state immediately
+        continue
+
+
+    # Start with an image that has ArUco markers drawn if any are visible.
+    # detect_and_draw_markers returns (img_marked_bgr, corners, ids)
+    image_to_display_bgr, _, _ = detect_and_draw_markers(raw_camera_image_buffer)
+    # Now image_to_display_bgr has basic markers.
+    # If in DETECTING_AT_SPOT, it will be further processed and replaced.
 
     if current_state == STANDBY:
-        current_state = DETECTING
+        # print("State: STANDBY -> MOVING_TO_DETECT_SPOT") # Original line
+        if not active_trajectory: # Only print waiting message if not already in a (aborted) movement
+            if not standby_prompt_shown:
+                print("State: STANDBY. Press 's' to start detection sequence, or 'x' to stop (if applicable).")
+                standby_prompt_shown = True
 
-    elif current_state == DETECTING:
+        if key == ord('S') or key == ord('s'):
+            print("Start command ('s') received. Initializing detection sequence.")
+            standby_prompt_shown = False # Reset for next STANDBY entry
+            # Prepare for movement to initial detection spot
+            target_position_world = [0, 0.150, 1] # Initial detection pose in world coords
+            
+            x_robot, y_robot, z_robot = convert_webots_to_robot_coordinates(target_position_world)
+            ik_target_robot = np.array([x_robot, y_robot, z_robot])
+            
+            initial_joint_positions = [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
+            try:
+                target_joint_positions = chain.inverse_kinematics(
+                    ik_target_robot,
+                    target_orientation=target_orientation_matrix_down,
+                    orientation_mode="all",
+                    max_iter=IKPY_MAX_ITERATIONS,
+                    initial_position=initial_joint_positions
+                )
+            except Exception as e:
+                print(f"IK failed for initial detection spot {target_position_world} with orientation: {e}")
+                # supervisor.simulationQuit(1) # Or handle error appropriately
+                # current_state = STANDBY # Already in STANDBY, or will be due to stop command
+                active_trajectory = None # Ensure no active trajectory
+                continue # Stay in standby or go to an error state
+
+            active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 30).q # Reduced from 50 to 30 steps
+            trajectory_step_index = 0
+            
+            g_target_for_check_if_moved = target_position_world
+            current_state = MOVING_TO_DETECT_SPOT
+        # else: remain in STANDBY, waiting for 's'
+
+    elif current_state == MOVING_TO_DETECT_SPOT:
+        if active_trajectory is not None and trajectory_step_index < len(active_trajectory):
+            current_joint_targets = active_trajectory[trajectory_step_index]
+            for i in range(len(motors)):
+                motors[i].setPosition(current_joint_targets[i + 1])
+            trajectory_step_index += 1
+        else: # Trajectory complete or no trajectory
+            if active_trajectory is not None and trajectory_step_index >= len(active_trajectory): # Ensure final point is commanded
+                 final_joint_targets = active_trajectory[-1]
+                 for i in range(len(motors)):
+                    motors[i].setPosition(final_joint_targets[i + 1])
+            
+            # Add a small delay or check for actual movement if check_if_moved is too sensitive
+            # For now, directly check if moved
+            if g_target_for_check_if_moved is not None and check_if_moved(g_target_for_check_if_moved):
+                print("Arrived at detection spot.")
+                current_state = DETECTING_AT_SPOT
+                active_trajectory = None # Clear trajectory
+            elif g_target_for_check_if_moved is None and active_trajectory is None:
+                # This case might happen if IK failed in STANDBY and we jumped here senza un target
+                print("Error: No target to move to for detection. Returning to STANDBY.")
+                current_state = STANDBY
+            else:
+                print("Waiting to arrive at detection spot...")
+
+
+    elif current_state == DETECTING_AT_SPOT:
+        print("State: DETECTING_AT_SPOT")
+        # Perform full detection, get annotated image and cell centers
+        # This uses the raw_camera_image_buffer obtained at the start of the loop
+        annotated_image, detected_cam_centers, detected_world_centers = run_detection_and_get_annotated_image(raw_camera_image_buffer)
         
-        target_position = [0, 0.108, 1]
-
-        move_to_target(target_position)
+        image_to_display_bgr = annotated_image # Show the detailed image for this state
         
-        if check_if_moved(target_position):
-            cam_centers, world_centers = detect_markers()
+        # Update global cam_centers and world_centers for use in this state and potentially others
+        cam_centers = detected_cam_centers
+        world_centers = detected_world_centers
 
-            if not bacteria_spawned:
-                spawn_bacteria_in_cells(world_centers, num_bacteria=5)
-                bacteria_spawned = True
+        if not world_centers: # Check the updated global world_centers
+            print("Error: No cell centers found at detection spot. Check camera view/marker setup. Returning to STANDBY.")
+            current_state = STANDBY 
+            active_trajectory = None # Ensure no trajectory active
+            continue
 
-                # Switch to MONITORING state
-                current_state = MONITORING
+        # Bacteria spawning logic remains, but confirmation comes after
+        if not bacteria_spawned:
+            spawn_bacteria_in_cells(world_centers, num_bacteria=5) 
+            bacteria_spawned = True
+        
+        # Transition to awaiting confirmation instead of directly to monitoring
+        # print("Markers detected. Initiate sterilization? (y/n)") # Moved to AWAITING_CONFIRMATION state
+        current_state = AWAITING_CONFIRMATION
+        confirmation_prompt_shown = False # Ensure prompt shows on entry to AWAITING_CONFIRMATION
+        # current_cell_index = 0 # Reset cell index for new scan # Moved to after 'y' confirmation
+        # current_state = MONITORING_SELECT_CELL # Original line
+        # print("Detection complete. Transitioning to MONITORING_SELECT_CELL.") # Original line
 
-    elif current_state == MONITORING:
+    elif current_state == AWAITING_CONFIRMATION:
+        # It's important to print the prompt every time we are in this state,
+        # as the key press might not have happened in the same simulation step.
+        # print("State: AWAITING_CONFIRMATION. Markers detected. Initiate sterilization? (y/n)") # Old repetitive print
+        if not confirmation_prompt_shown:
+            print("State: AWAITING_CONFIRMATION. Markers detected. Initiate sterilization? (y/n)")
+            confirmation_prompt_shown = True
 
-        # Call markers detection to update camera and world positions
-        _, _ = detect_markers()
-
-        if len(world_centers) > 0 and current_cell_index < len(world_centers): 
-            # Move to the next target position
-            next_target = list(world_centers.values())[current_cell_index]
-            next_target_adj = [next_target[0], next_target[1], next_target[2]]
-            move_to_target(next_target_adj)
-
-            if check_if_moved(next_target_adj):
-                current_state = STERILIZING
-        else:
+        if key == ord('Y') or key == ord('y'):
+            print("'y' received. Starting sterilization process.")
+            confirmation_prompt_shown = False # Reset for next entry to this state
+            current_cell_index = 0 # Reset cell index for new scan
+            current_state = MONITORING_SELECT_CELL
+            # standby_prompt_shown = False # Not needed here, will be handled if/when returning to STANDBY
+            print("Transitioning to MONITORING_SELECT_CELL.")
+        elif key == ord('N') or key == ord('n'):
+            print("'n' received. Returning to STANDBY.")
+            confirmation_prompt_shown = False # Reset for next entry to this state
             current_state = STANDBY
+            standby_prompt_shown = False # Ensure prompt shows on entry to STANDBY
+            active_trajectory = None
+            # Reset relevant variables for a clean standby
+            cam_centers = {}
+            world_centers = {}
+            # bacteria_spawned = False # Decide if bacteria should despawn or stay for next attempt
+            # For now, let's keep bacteria if they were spawned, user might want to try again soon.
+            # If a full reset is desired on 'n', uncomment the line above.
+            print("Robot returning to STANDBY. Press 's' to try again.")
 
-    elif current_state == STERILIZING:
+    elif current_state == MONITORING_SELECT_CELL:
+        print(f"State: MONITORING_SELECT_CELL. Current cell index: {current_cell_index}")
+        if world_centers and current_cell_index < len(world_centers):
+            next_target_world = list(world_centers.values())[current_cell_index]
+            
+            x_cell_robot, y_cell_robot, z_cell_robot = convert_webots_to_robot_coordinates(next_target_world)
+            ik_target_robot = np.array([x_cell_robot, y_cell_robot, z_cell_robot])
+
+            initial_joint_positions = [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
+            try:
+                target_joint_positions = chain.inverse_kinematics(
+                    ik_target_robot,
+                    target_orientation=target_orientation_matrix_down,
+                    orientation_mode="all",
+                    max_iter=IKPY_MAX_ITERATIONS,
+                    initial_position=initial_joint_positions
+                )
+            except Exception as e:
+                print(f"IK failed for cell {current_cell_index} at {next_target_world} and orientation: {e}")
+                current_cell_index += 1 
+                active_trajectory = None # Ensure no active trajectory
+                if current_cell_index >= len(world_centers):
+                    print("Finished all cells or remaining cells failed IK. Returning to STANDBY.")
+                    current_state = STANDBY
+                # else: continue to MONITORING_SELECT_CELL for the next cell
+                continue 
+
+            active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 30).q # Reduced from 50 to 30 steps
+            trajectory_step_index = 0
+            
+            g_target_for_check_if_moved = next_target_world
+
+            current_state = MOVING_TO_CELL
+            print(f"Moving to cell {current_cell_index} (target: {next_target_world})")
+        else:
+            print("All cells processed or no cells to process. Returning to STANDBY.")
+            current_state = STANDBY
+            active_trajectory = None # Clear trajectory
+
+    elif current_state == MOVING_TO_CELL:
+        if active_trajectory is not None and trajectory_step_index < len(active_trajectory):
+            current_joint_targets = active_trajectory[trajectory_step_index]
+            for i in range(len(motors)):
+                motors[i].setPosition(current_joint_targets[i + 1])
+            trajectory_step_index += 1
+        else: # Trajectory complete
+            if active_trajectory is not None and trajectory_step_index >= len(active_trajectory): # Ensure final point is commanded
+                 final_joint_targets = active_trajectory[-1]
+                 for i in range(len(motors)):
+                    motors[i].setPosition(final_joint_targets[i + 1])
+
+            if g_target_for_check_if_moved is not None and check_if_moved(g_target_for_check_if_moved):
+                print(f"Arrived at cell {current_cell_index}.")
+                current_state = STERILIZING_CELL
+                timestep_sum = 0 
+                active_trajectory = None # Clear trajectory
+            elif g_target_for_check_if_moved is None and active_trajectory is None:
+                # This case might happen if IK failed and we jumped here senza un target
+                print(f"Error: No target to move to for cell {current_cell_index}. Returning to MONITORING_SELECT_CELL.")
+                current_state = MONITORING_SELECT_CELL # Or STANDBY
+                current_cell_index +=1 # Try next cell
+            else:
+                print(f"Waiting to arrive at cell {current_cell_index}...")
+
+    elif current_state == STERILIZING_CELL:
+
+        print(f"Sterilizing cell {current_cell_index} at position {list(world_centers.values())[current_cell_index]}")
+        timestep_sum += timeStep
         
-        if timestep_sum >= timeStep * 5:
+        if timestep_sum >= timeStep * 5: # Sterilization duration (5 timesteps)
             current_cell_index += 1
             timestep_sum = 0
-            current_state = MONITORING
-        else:
-            # Simulate sterilization by printing a message
-            print(f"Sterilizing cell {current_cell_index} at position {list(world_centers.values())[current_cell_index]}")
-            timestep_sum += timeStep
+            current_state = MONITORING_SELECT_CELL # Go to next cell
+            print(f"Sterilization of cell {current_cell_index-1} complete. Checking for next cell.")
+    
+    # At the end of each loop iteration, update the display with the chosen image_to_display_bgr
+    _update_display(image_to_display_bgr)
