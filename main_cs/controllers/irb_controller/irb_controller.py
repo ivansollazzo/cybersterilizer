@@ -273,26 +273,7 @@ def convert_webots_to_robot_coordinates(targetPosition):
 
     return [x, y, z]
 
-# Function to move the arm to a target position with an optional offset
-def move_to_target(targetPosition):
-
-    # Convert Webots global target to robot base frame
-    new_target = convert_webots_to_robot_coordinates(targetPosition)
-
-    # Get current joint positions as initial guess
-    initial_position = [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
-
-    # Inverse kinematics to reach the new target with offset
-    ikResults = chain.inverse_kinematics(new_target, max_iter=IKPY_MAX_ITERATIONS, initial_position=initial_position)
-
-    # Plan the joint-space trajectory
-    trajectory = jtraj(initial_position, ikResults, 100)
-
-    # Execute the trajectory
-    for pos in trajectory.q:
-        for i in range(len(motors)):
-            motors[i].setPosition(pos[i + 1])
-
+# Function to spawn bacteria in the grid cells
 def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
 
     if not world_centers:
@@ -352,6 +333,7 @@ def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
         
     print(f"Spawned {num_bacteria} bacteria in the grid cells")
 
+# Function to get the positions of all bacteria in the world
 def get_bacteria_positions():
     """Restituisce una lista delle posizioni dei batteri nel mondo."""
     positions = []
@@ -416,6 +398,7 @@ def run_detection_and_get_annotated_image(raw_camera_image_buffer):
 
     return final_annotated_image_bgr, calculated_cam_centers, calculated_world_centers
 
+# Check if moved
 def check_if_moved(targetPosition):
 
     # Get the current joint angles
@@ -437,6 +420,11 @@ def check_if_moved(targetPosition):
         return True
     
     return False
+
+# Function to get current joint angles
+def get_current_joint_angles():
+    return [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
+
 
 # Store the current state of the arm
 # STANDBY, DETECTING, MONITORING, STERILIZING = range(4) # Old states
@@ -468,6 +456,7 @@ while supervisor.step(timeStep) != -1:
 
     # Global stop command ('x' key)
     if key == ord('X') or key == ord('x'):
+        
         print("Stop command received ('x'). Returning to STANDBY.")
         current_state = STANDBY
         standby_prompt_shown = False # Ensure prompt shows on next STANDBY entry
@@ -479,38 +468,42 @@ while supervisor.step(timeStep) != -1:
         world_centers = {}
         current_cell_index = 0
         bacteria_spawned = False # Reset bacteria spawning status
+        
         # Optionally, turn off light_killer if it could be on
         # light_killer.set(0) 
         print("Robot stopped and reset to STANDBY.")
+        
         # Clear remaining key presses for this step
         while key != -1: key = keyboard.getKey()
+        
         # Continue to the next iteration to process the STANDBY state immediately
         continue
 
 
     # Start with an image that has ArUco markers drawn if any are visible.
-    # detect_and_draw_markers returns (img_marked_bgr, corners, ids)
     image_to_display_bgr, _, _ = detect_and_draw_markers(raw_camera_image_buffer)
-    # Now image_to_display_bgr has basic markers.
-    # If in DETECTING_AT_SPOT, it will be further processed and replaced.
 
     if current_state == STANDBY:
-        # print("State: STANDBY -> MOVING_TO_DETECT_SPOT") # Original line
-        if not active_trajectory: # Only print waiting message if not already in a (aborted) movement
+        
+        # If no active trajectory, show the standby prompt only once
+        if not active_trajectory:
             if not standby_prompt_shown:
                 print("State: STANDBY. Press 's' to start detection sequence, or 'x' to stop (if applicable).")
                 standby_prompt_shown = True
 
+        # If start command ('s') is received, transition to MOVING_TO_DETECT_SPOT
         if key == ord('S') or key == ord('s'):
             print("Start command ('s') received. Initializing detection sequence.")
-            standby_prompt_shown = False # Reset for next STANDBY entry
+            standby_prompt_shown = False
+            
             # Prepare for movement to initial detection spot
-            target_position_world = [0, 0.150, 1] # Initial detection pose in world coords
+            target_position_world = [0, 0.150, 1]
             
             x_robot, y_robot, z_robot = convert_webots_to_robot_coordinates(target_position_world)
             ik_target_robot = np.array([x_robot, y_robot, z_robot])
             
-            initial_joint_positions = [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
+            initial_joint_positions = get_current_joint_angles()
+            
             try:
                 target_joint_positions = chain.inverse_kinematics(
                     ik_target_robot,
@@ -526,19 +519,23 @@ while supervisor.step(timeStep) != -1:
                 active_trajectory = None # Ensure no active trajectory
                 continue # Stay in standby or go to an error state
 
-            active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 30).q # Reduced from 50 to 30 steps
+            active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 10).q
             trajectory_step_index = 0
             
             g_target_for_check_if_moved = target_position_world
             current_state = MOVING_TO_DETECT_SPOT
-        # else: remain in STANDBY, waiting for 's'
 
+    # If we are moving to the detection spot, execute the trajectory
     elif current_state == MOVING_TO_DETECT_SPOT:
+        
         if active_trajectory is not None and trajectory_step_index < len(active_trajectory):
+           
             current_joint_targets = active_trajectory[trajectory_step_index]
+            
             for i in range(len(motors)):
                 motors[i].setPosition(current_joint_targets[i + 1])
             trajectory_step_index += 1
+        
         else: # Trajectory complete or no trajectory
             if active_trajectory is not None and trajectory_step_index >= len(active_trajectory): # Ensure final point is commanded
                  final_joint_targets = active_trajectory[-1]
@@ -627,7 +624,8 @@ while supervisor.step(timeStep) != -1:
             x_cell_robot, y_cell_robot, z_cell_robot = convert_webots_to_robot_coordinates(next_target_world)
             ik_target_robot = np.array([x_cell_robot, y_cell_robot, z_cell_robot])
 
-            initial_joint_positions = [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
+            initial_joint_positions = get_current_joint_angles()
+            
             try:
                 target_joint_positions = chain.inverse_kinematics(
                     ik_target_robot,
@@ -646,24 +644,28 @@ while supervisor.step(timeStep) != -1:
                 # else: continue to MONITORING_SELECT_CELL for the next cell
                 continue 
 
-            active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 30).q # Reduced from 50 to 30 steps
+            active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 10).q
+            
             trajectory_step_index = 0
             
             g_target_for_check_if_moved = next_target_world
 
             current_state = MOVING_TO_CELL
             print(f"Moving to cell {current_cell_index} (target: {next_target_world})")
+        
         else:
             print("All cells processed or no cells to process. Returning to STANDBY.")
             current_state = STANDBY
             active_trajectory = None # Clear trajectory
 
     elif current_state == MOVING_TO_CELL:
+        
         if active_trajectory is not None and trajectory_step_index < len(active_trajectory):
             current_joint_targets = active_trajectory[trajectory_step_index]
             for i in range(len(motors)):
                 motors[i].setPosition(current_joint_targets[i + 1])
             trajectory_step_index += 1
+        
         else: # Trajectory complete
             if active_trajectory is not None and trajectory_step_index >= len(active_trajectory): # Ensure final point is commanded
                  final_joint_targets = active_trajectory[-1]
