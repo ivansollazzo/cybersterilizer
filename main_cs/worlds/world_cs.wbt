@@ -79,7 +79,7 @@ Irb4600-40 {
     Camera {
       translation -0.000101912 0.0200525 0.020051
       rotation 0.5773519358547601 0.5773499358549823 0.5773489358550934 -1.98
-      fieldOfView 1.1
+      fieldOfView 2
       width 1920
       height 1080
     }

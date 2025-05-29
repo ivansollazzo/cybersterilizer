@@ -272,7 +272,8 @@ def move_to_target(targetPosition):
 
     for pos in trajectory.q:
         for i in range(len(motors)):
-            motors[i].setPosition(pos[i + 1])  # Skip the base joint (index 0) and end effector (index -2)
+            motors[i].setPosition(pos[i + 1])
+            motors[3].setPosition(0.0)
 
 def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
     """
@@ -460,10 +461,13 @@ while supervisor.step(timeStep) != -1:
 
     elif current_state == MONITORING:
 
+        # Call markers detection to update camera and world positions
+        _, _ = detect_markers()
+
         if len(world_centers) > 0 and current_cell_index < len(world_centers): 
             # Move to the next target position
             next_target = list(world_centers.values())[current_cell_index]
-            next_target_adj = [next_target[0], next_target[1] + 0.07, next_target[2] + 0.1]
+            next_target_adj = [next_target[0], next_target[1] + 0.08, next_target[2] + 0.2]
             move_to_target(next_target_adj)
 
             if check_if_moved(next_target_adj):
