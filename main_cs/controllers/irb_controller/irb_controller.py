@@ -517,6 +517,9 @@ g_target_for_check_if_moved = None # Stores the world coordinate target for chec
 standby_prompt_shown = False
 confirmation_prompt_shown = False
 
+# To store the last image with grid for display in STANDBY
+last_known_annotated_image = None
+
 # Main loop
 while supervisor.step(timeStep) != -1:
     raw_camera_image_buffer = camera.getImage() # Get raw image data once per loop
@@ -537,6 +540,7 @@ while supervisor.step(timeStep) != -1:
         current_cell_index = 0
         bacteria_spawned = False # Reset bacteria spawning status
         batteri_dict = {} # Reset bacteria mapping
+        last_known_annotated_image = None # Clear the stored annotated image
         
         # Optionally, turn off light_killer if it could be on
         # light_killer.set(0) 
@@ -553,6 +557,10 @@ while supervisor.step(timeStep) != -1:
     image_to_display_bgr, _, _ = detect_and_draw_markers(raw_camera_image_buffer)
 
     if current_state == STANDBY:
+        # If a previously annotated image with a grid exists and world_centers is populated,
+        # use it for display. Otherwise, the default image_to_display_bgr (basic markers) is used.
+        if last_known_annotated_image is not None and world_centers:
+            image_to_display_bgr = last_known_annotated_image
 
         # Killer spotlight logic
         killer_spotlight = supervisor.getFromDef("killerspotlight")
@@ -664,9 +672,14 @@ while supervisor.step(timeStep) != -1:
         
         image_to_display_bgr = annotated_image # Show the detailed image for this state
         
-        # Update global cam_centers and world_centers for use in this state and potentially others
         cam_centers = detected_cam_centers
         world_centers = detected_world_centers
+
+        # Store the annotated image if detection was successful
+        if world_centers:
+            last_known_annotated_image = image_to_display_bgr.copy()
+        else:
+            last_known_annotated_image = None # Clear if no centers found
 
         if not world_centers: # Check the updated global world_centers
             print("Error: No cell centers found at detection spot. Check camera view/marker setup. Returning to STANDBY.")
@@ -688,6 +701,11 @@ while supervisor.step(timeStep) != -1:
         # print("Detection complete. Transitioning to MONITORING_SELECT_CELL.") # Original line
 
     elif current_state == AWAITING_CONFIRMATION:
+        # If a previously annotated image with a grid exists and world_centers is populated,
+        # use it for display. Otherwise, the default image_to_display_bgr (basic markers) is used.
+        if last_known_annotated_image is not None and world_centers:
+            image_to_display_bgr = last_known_annotated_image
+
         # It's important to print the prompt every time we are in this state,
         # as the key press might not have happened in the same simulation step.
         # print("State: AWAITING_CONFIRMATION. Markers detected. Initiate sterilization? (y/n)") # Old repetitive print
