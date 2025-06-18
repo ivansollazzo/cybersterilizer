@@ -18,8 +18,8 @@ EXTERNPROTO "../protos/EndEffectorBase.proto"
 WorldInfo {
 }
 Viewpoint {
-  orientation -0.17771164463526226 0.8298608084348724 0.5289136129698784 0.769427572972581
-  position -9.828081857496844 -4.768106396395398 8.852613559047558
+  orientation -0.17771116397177808 0.8298585638785947 0.5289172961410433 0.769429454728742
+  position -9.828081857496839 -4.768106396395397 8.852613559047558
   exposure 0.3
 }
 TexturedBackground {
@@ -50,8 +50,8 @@ Irb4600-40 {
           beamWidth 0.02
           color 0.333 1 1
           cutOffAngle 0.08
-          direction -0.08 -1.46 0.38
-          intensity 15
+          direction -0.22 -1.46 0.38
+          intensity 0
         }
       ]
       name "solid(2)"
@@ -66,7 +66,7 @@ Irb4600-40 {
           color 1 0 1
           cutOffAngle 0.08
           direction 0.08 -1.46 0.38
-          intensity 40
+          intensity 0
           castShadows TRUE
         }
       ]

@@ -44,7 +44,7 @@ with tempfile.NamedTemporaryFile(suffix='.urdf', delete=False) as file:
     file.write(supervisor.getUrdf().encode('utf-8'))
 
 # Initialize the arm chain using the URDF file
-end_effector_offset = [0.0, 0.0, 0.5]
+end_effector_offset = [0.0, 0.0, 0.3]
 chain = Chain.from_urdf_file(filename, last_link_vector=end_effector_offset, active_links_mask=[False, True, True, True, True, True, True, False, False, False])
 
 # Initialize the arm motors and encoders.
@@ -341,14 +341,7 @@ def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
         cell_index = random.randint(0, len(cell_positions) - 1)
         base_position = cell_positions[cell_index]
 
-        # Aggiungi un piccolo offset casuale
-        offset = np.array([
-            random.uniform(-0.02, 0.02),  # ±2cm in x
-            random.uniform(-0.02, 0.02),  # ±2cm in y
-            random.uniform(0, 0.01)       # 0–1cm in z
-        ])
-
-        bacteria_position = base_position + offset
+        bacteria_position = base_position
 
         # Spawna il batterio
         group_field.importMFNodeFromString(-1, bacteria_proto)
@@ -380,12 +373,20 @@ def get_bacteria_positions():
 
     return positions
 
-def findContours():
-    # Ottieni l'immagine dalla camera
-    raw_image = camera.getImage()
-    img_bgra = np.frombuffer(raw_image, np.uint8).reshape(img_height, img_width, 4)
+def findContours(raw_image_buffer):
+    """
+    Trova i contorni dei batteri rossi nell'immagine raw della camera e li disegna.
+    
+    Args:
+        raw_image_buffer: Buffer raw dell'immagine dalla camera
+    
+    Returns:
+        img_bgr: Immagine BGR con i contorni disegnati
+    """
+    # Converti l'immagine raw in formato BGR
+    img_bgra = np.frombuffer(raw_image_buffer, np.uint8).reshape(img_height, img_width, 4)
     img_bgr = cv2.cvtColor(img_bgra, cv2.COLOR_BGRA2BGR)
-
+    
     # --- RILEVAMENTO BATTERI ROSSI ---
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     lower_red1 = np.array([0, 100, 100])
@@ -400,21 +401,27 @@ def findContours():
 
     # Trova contorni dei batteri
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-   
 
-    # --- VISUALIZZAZIONE ---
-    display.setColor(0x0000FF)  # verde
+    # --- DISEGNO DIRETTO SULL'IMMAGINE BGR ---
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        # Disegniamo 6 rettangoli concentrici per spessore spesso
-        for thickness in range(6):
-            display.drawRectangle(x - thickness, y - thickness, w + 2*thickness, h + 2*thickness)
-
-        # Opzionale: disegna un cerchio al centro del box
+        
+        # Disegna rettangoli concentrici per maggiore visibilità
+        for thickness in range(1, 4):
+            cv2.rectangle(img_bgr, 
+                         (max(0, x - thickness), max(0, y - thickness)), 
+                         (min(img_width, x + w + thickness), min(img_height, y + h + thickness)), 
+                         (0, 255, 0),  # Verde brillante in formato BGR
+                         2)
+        
+        # Disegna un cerchio pieno al centro
         center_x = x + w // 2
         center_y = y + h // 2
-        radius = max(w, h) // 10  # dimensione proporzionale
-        display.drawOval(center_x - radius, center_y - radius, 2*radius, 2*radius)
+        radius = max(5, max(w, h) // 8)
+        cv2.circle(img_bgr, (center_x, center_y), radius, (0, 255, 0), -1)
+        cv2.circle(img_bgr, (center_x, center_y), radius + 2, (0, 0, 255), 2)
+    
+    return img_bgr
 
 # Function to update the Webots display with a given BGR image
 def _update_display(image_bgr_to_show):
@@ -575,7 +582,6 @@ while supervisor.step(timeStep) != -1:
             else:
                 # Imposta l'intensità a 0
                 intensitykiller_field.setSFFloat(0.0)
-                print("Intensità impostata a 0.")
         
         # Detector spotlight logic
         detector_spotlight = supervisor.getFromDef("detectorspotlight")
@@ -591,7 +597,6 @@ while supervisor.step(timeStep) != -1:
             else:
                 # Set the intensity to 0
                 intensitydetector_field.setSFFloat(0.0)
-                print("Intensità impostata a 0.")
         
         # If no active trajectory, show the standby prompt only once
         if not active_trajectory:
@@ -672,6 +677,7 @@ while supervisor.step(timeStep) != -1:
         
         image_to_display_bgr = annotated_image # Show the detailed image for this state
         
+        # Update global cam_centers and world_centers for use in this state and potentially others
         cam_centers = detected_cam_centers
         world_centers = detected_world_centers
 
@@ -804,19 +810,17 @@ while supervisor.step(timeStep) != -1:
                 print(f"Waiting to arrive at cell {current_cell_index}...")
 
     elif current_state == STERILIZING_CELL:
-        print(f"Sterilizing cell {current_cell_index} at position {list(world_centers.values())[current_cell_index]}")
-        
-        # --- NUOVA LOGICA DI RILEVAMENTO BATTERI INTEGRATA DAL SECONDO CONTROLLORE ---
-        
+        print(f"Inspecting cell {current_cell_index} at position {list(world_centers.values())  [current_cell_index]}")
+
         # Ottieni riferimenti alle luci spotlight
         detector_spotlight = supervisor.getFromDef("detectorspotlight")
         killer_spotlight = supervisor.getFromDef("killerspotlight")
-        
+
         if detector_spotlight:
             intensitydetector_field = detector_spotlight.getField("intensity")
         if killer_spotlight:
             intensitykiller_field = killer_spotlight.getField("intensity")
-        
+
         # Ottieni il campo "children" dal nodo Group
         children_field = bacteria_group.getField("children")
 
@@ -827,86 +831,127 @@ while supervisor.step(timeStep) != -1:
         else:
             batteri_presenti = valore
 
-        # FASE 1: RILEVAMENTO
+        # FASE 1: RILEVAMENTO (SEMPRE ATTIVO)
+        print(f"Attivando detector per scansione cella {current_cell_index}")
+
+        # Accendi luce detector per il rilevamento
+        if detector_spotlight and intensitydetector_field:
+            intensitydetector_field.setSFFloat(20.0)
+
+        # Aggiorna immediatamente l'immagine per mostrare la luce detector
+        current_raw = camera.getImage()
+        image_to_display_bgr = findContours(current_raw)
+        _update_display(image_to_display_bgr)
+
+        # Se ci sono batteri, rendili visibili gradualmente
         if len(batteri_presenti) > 0:
             print(f"Batteri rilevati nella cella {current_cell_index}: {batteri_presenti}")
-            
-            # Accendi luce detector per il rilevamento
-            if detector_spotlight and intensitydetector_field:
-                intensitydetector_field.setSFFloat(20.0)
-            
-            # Rendi visibili i batteri gradualmente
+
+            # Rendi visibili i batteri gradualmente con aggiornamento continuo dell'immagine
             for i in batteri_presenti:
-                if i < children_field.getCount():  # Verifica che l'indice sia valido
+                if i < children_field.getCount():
                     bacterium = children_field.getMFNode(i)
                     if bacterium:
                         shape_node = bacterium.getField("children").getMFNode(0)
                         appearance_node = shape_node.getField("appearance").getSFNode()
                         material_node = appearance_node.getField("material").getSFNode()
                         transparency_field = material_node.getField("transparency")
-                        
+
                         for step in range(101):
-                            # Aggiorna la trasparenza per rendere visibile il batterio
                             transparency = 1.0 - (step / 100)
                             transparency_field.setSFFloat(transparency)
                             supervisor.step(timeStep)
 
-            # Rileva i contorni dei batteri
-            findContours()
-            
-            # Attendi 3 secondi con rilevamento attivo
-            wait_steps = int(3000 / timeStep)
-            for _ in range(wait_steps):
+                            # Aggiorna l'immagine ogni 10 step per mostrare il processo graduale
+                            if step % 10 == 0:
+                                current_raw = camera.getImage()
+                                image_to_display_bgr = findContours(current_raw)
+                                _update_display(image_to_display_bgr)
+        else:
+            print(f"Nessun batterio rilevato nella cella {current_cell_index}")
+            # Attendi 1 secondo con rilevamento attivo e aggiornamento continuo
+            wait_steps = int(10000 / timeStep)
+            for step in range(wait_steps):
                 supervisor.step(timeStep)
+                # Aggiorna l'immagine ogni 20 step durante l'attesa
+                if step % 20 == 0:
+                    current_raw = camera.getImage()
+                    image_to_display_bgr = findContours(current_raw)
+                    _update_display(image_to_display_bgr)
 
-            # FASE 2: STERILIZZAZIONE
+        # FASE 2: STERILIZZAZIONE (SOLO SE CI SONO BATTERI)
+        if len(batteri_presenti) > 0:
             print(f"Iniziando sterilizzazione nella cella {current_cell_index}")
-            
+
             # Spegni luce detector e accendi luce killer
             if detector_spotlight and intensitydetector_field:
                 intensitydetector_field.setSFFloat(0.0)
             if killer_spotlight and intensitykiller_field:
                 intensitykiller_field.setSFFloat(20.0)
-                
-            # Attendi 3 secondi per la sterilizzazione
-            wait_steps = int(3000 / timeStep)
-            for _ in range(wait_steps):
-                supervisor.step(timeStep)
 
-            # Rendi i batteri invisibili (sterilizzati)
+            # Aggiorna immediatamente l'immagine per mostrare la luce UV
+            current_raw = camera.getImage()
+            image_to_display_bgr = findContours(current_raw)
+            _update_display(image_to_display_bgr)
+
+            # Attendi 1 secondo per la sterilizzazione con aggiornamento continuo
+            wait_steps = int(1000 / timeStep)
+            for step in range(wait_steps):
+                supervisor.step(timeStep)
+                # Aggiorna l'immagine ogni 20 step per mostrare la luce UV
+                if step % 20 == 0:
+                    current_raw = camera.getImage()
+                    image_to_display_bgr = findContours(current_raw)
+                    _update_display(image_to_display_bgr)
+
+            # Rendi i batteri invisibili (sterilizzati) con aggiornamento continuo
             for i in batteri_presenti:
-                if i < children_field.getCount():  # Verifica che l'indice sia valido
+                if i < children_field.getCount():
                     bacterium = children_field.getMFNode(i)
                     if bacterium:
                         shape_node = bacterium.getField("children").getMFNode(0)
                         appearance_node = shape_node.getField("appearance").getSFNode()
                         material_node = appearance_node.getField("material").getSFNode()
                         transparency_field = material_node.getField("transparency")
-                        
+
                         for step in range(101):
-                            transparency = step / 100.0  # va da 0.0 a 1.0
+                            transparency = step / 100.0
                             transparency_field.setSFFloat(transparency)
                             supervisor.step(timeStep)
-            
+
+                            # Aggiorna l'immagine ogni 10 step per mostrare il processo di sterilizzazione
+                            if step % 10 == 0:
+                                current_raw = camera.getImage()
+                                image_to_display_bgr = findContours(current_raw)
+                                _update_display(image_to_display_bgr)
+
             # Spegni luce killer
             if killer_spotlight and intensitykiller_field:
                 intensitykiller_field.setSFFloat(0.0)
-                        
+
+            # Aggiorna l'immagine finale senza luce UV
+            current_raw = camera.getImage()
+            image_to_display_bgr = findContours(current_raw)
+            _update_display(image_to_display_bgr)
+
             print(f"Sterilizzazione batteri completata nella cella {current_cell_index}")
         else:
-            print(f"Nessun batterio nella cella {current_cell_index}, salto sterilizzazione.")
-            # Attendi comunque un po' per simulare il processo
-            wait_steps = int(1000 / timeStep)
-            for _ in range(wait_steps):
-                supervisor.step(timeStep)
-        
-        # --- FINE NUOVA LOGICA ---
-        
+            # Solo spegni il detector se non ci sono batteri da sterilizzare
+            if detector_spotlight and intensitydetector_field:
+                intensitydetector_field.setSFFloat(0.0)
+
+            # Aggiorna l'immagine finale
+            current_raw = camera.getImage()
+            image_to_display_bgr = findContours(current_raw)
+            _update_display(image_to_display_bgr)
+
+            print(f"Nessun batterio da sterilizzare nella cella {current_cell_index}, processo completato.")
+
         # Passa alla cella successiva
         current_cell_index += 1
         timestep_sum = 0
-        current_state = MONITORING_SELECT_CELL # Go to next cell
-        print(f"Sterilization of cell {current_cell_index-1} complete. Checking for next cell.")
+        current_state = MONITORING_SELECT_CELL
+        print(f"Inspection/sterilization of cell {current_cell_index-1} complete. Checking for next cell.")
     
     # At the end of each loop iteration, update the display with the chosen image_to_display_bgr
     _update_display(image_to_display_bgr)
