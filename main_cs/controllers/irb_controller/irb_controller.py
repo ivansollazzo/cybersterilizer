@@ -1,24 +1,33 @@
-# Import needed libraries
-import numpy as np
-import ikpy
-from ikpy.chain import Chain
+'''
+University of Palermo - Medical Robotics Course
+ABB IRB4600 Controller
+Developed by: Ivan Sollazzo, Gabriele Burgio, Luca Masi and Federico Ennio Ambrogi
+'''
+
+# Import Webots libraries
 from controller import Supervisor
+
+# Import base libraries
 import tempfile
 import math
-import cv2
-import cv2.aruco as aruco
-from scipy.spatial.transform import Rotation as R
+import numpy as np
 import random
 
-# Check if numpy has the disp function, if not, define it
+# Import OpenCV libraries
+import cv2
+import cv2.aruco as aruco
+
+# Import robotics libraries. We use ikpy for inverse kinematics and Robotics Toolbox by Peter Corke for trajectory generation.
+import ikpy
+from ikpy.chain import Chain
+from roboticstoolbox.tools.trajectory import jtraj
+
+# Check if Numpy has the disp function, if not, define it (not all versions of Numpy need this)
 if not hasattr(np, 'disp'):
     np.disp = lambda x, *args, **kwargs: print(x, *args, **kwargs)
 
-#Now we can import the Robotics Toolbox for Python
-from roboticstoolbox.tools.trajectory import jtraj
-
-# Constants
-IKPY_MAX_ITERATIONS = 100 # Increased for better accuracy
+# Define max iterations for IKPY library. Higher values can lead to better accuracy but may increase computation time.
+IKPY_MAX_ITERATIONS = 100
 
 # Target orientation for the end-effector (pointing straight down)
 # Assumes robot base Z is up, end-effector Z is tool direction.
@@ -29,7 +38,7 @@ target_orientation_matrix_down = np.array([
     [0,  0, -1]   # End-effector Z-axis aligned with robot base -Z-axis (pointing down)
 ])
 
-# Initialize the Webots Supervisor and calculate the time step.
+# Initialize the Webots supervisor and calculate the time step.
 supervisor = Supervisor()
 timeStep = int(4 * supervisor.getBasicTimeStep())
 
@@ -43,8 +52,10 @@ with tempfile.NamedTemporaryFile(suffix='.urdf', delete=False) as file:
     filename = file.name
     file.write(supervisor.getUrdf().encode('utf-8'))
 
-# Initialize the arm chain using the URDF file
+# Define the end effector offset. It will be used to adjust as the last link vector in the chain.
 end_effector_offset = [0.0, 0.0, 0.3]
+
+# Initialize the arm chain using the URDF file
 chain = Chain.from_urdf_file(filename, last_link_vector=end_effector_offset, active_links_mask=[False, True, True, True, True, True, True, False, False, False])
 
 # Initialize the arm motors and encoders.
@@ -106,13 +117,6 @@ marker_defs = {
 # Initialize dictionaries to store camera and world positions of markers
 cam_positions = {i: np.zeros(3, np.float32) for i in marker_defs}
 world_positions = {i: np.zeros(3, np.float32) for i in marker_defs}
-
-# AGGIUNTA PER INTEGRAZIONE - Funzione wait_seconds dal secondo controllore
-def wait_seconds(seconds):
-    steps = int((seconds * 1000) / timeStep)  # Converti i secondi in step
-    for _ in range(steps):
-        if supervisor.step(timeStep) == -1:
-            break  # In caso di uscita dal simulatore
 
 # Function to update camera positions of markers
 def update_cam_positions(corners, ids):
@@ -212,9 +216,10 @@ def draw_grid_overlay(img, quad_pts, rows, cols):
     grid = np.zeros((rows+1, cols+1, 2), np.float32)
 
     for i in range(rows+1):
-        alpha = i/rows
+        alpha = i / rows
         left  = tl*(1-alpha) + bl*alpha
         right = tr*(1-alpha) + br*alpha
+        
         for j in range(cols+1):
             grid[i,j] = left*(1-j/cols) + right*(j/cols)
     
@@ -279,36 +284,31 @@ def convert_webots_to_robot_coordinates(targetPosition):
     armPosition = arm.getPosition()
 
     # Compute the position of the target relatively to the arm.
-    # x and y axis are inverted because the arm is not aligned with theWebots global axes.
+    # x and y axis are inverted because the arm is not aligned with the Webots global axes.
     x = -(targetPosition[1] - armPosition[1])
     y = targetPosition[0] - armPosition[0]
     z = targetPosition[2] - armPosition[2]
 
     return [x, y, z]
 
-# FUNZIONE MODIFICATA - Integrazione dal secondo controllore
+# Function to spawn bacteria in the grid cells
 def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
-    """
-    Spawna batteri casualmente nelle celle della griglia.
-    
-    Args:
-        world_centers: dict - centri delle celle
-        num_bacteria: int - numero di batteri da spawnare
-    
-    Returns:
-        batterio_to_cella: dict - mappatura batterio-cella
-    """
+
+    # If there are no world centers, return an empty dictionary
     if not world_centers:
         print("No cell centers available for bacteria spawning!")
         return {}
-        
+    
+    # Get the bacteria group from the supervisor
     bacteria_group = supervisor.getFromDef("BacteriaGroup")
     if not bacteria_group:
         print("BacteriaGroup not found!")
         return {}
-        
+    
+    # Get the field for children nodes in the bacteria group
     group_field = bacteria_group.getField("children")
 
+    # Define the proto for the bacteria to be spawned
     bacteria_proto = """
     Solid {
       translation 0 0 0
@@ -332,18 +332,22 @@ def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
     }
     """
     
-    batterio_to_cella = {}  # Dizionario da popolare
+    # Initialize a dictionary to map bacteria to cells
+    batterio_to_cella = {}
 
-    cell_positions = list(world_centers.values())  # Ricava le posizioni in lista
+    # Get the positions of the cells in the world
+    cell_positions = list(world_centers.values())
 
+    # Spawn the specified number of bacteria
     for i in range(num_bacteria):
-        # Scegli una cella casuale
+        
+        # Choose a random cell index to spawn the bacteria
         cell_index = random.randint(0, len(cell_positions) - 1)
         base_position = cell_positions[cell_index]
 
         bacteria_position = base_position
 
-        # Spawna il batterio
+        # Spawn the bacteria at the chosen cell position
         group_field.importMFNodeFromString(-1, bacteria_proto)
         node = group_field.getMFNode(group_field.getCount() - 1)
         node.getField("translation").setSFVec3f(bacteria_position.tolist())
@@ -351,13 +355,12 @@ def spawn_bacteria_in_cells(world_centers, num_bacteria=5):
         batterio_to_cella[cell_index] = i    
 
     print(f"Spawned {num_bacteria} bacteria in the grid cells")
-    print("Mappa batterio → cella:", batterio_to_cella)
+    print("Mapping bacteria to cell:", batterio_to_cella)
 
     return batterio_to_cella
 
 # Function to get the positions of all bacteria in the world
 def get_bacteria_positions():
-    """Restituisce una lista delle posizioni dei batteri nel mondo."""
     positions = []
     bacteria_group = supervisor.getFromDef("BacteriaGroup")
     if not bacteria_group:
@@ -373,21 +376,14 @@ def get_bacteria_positions():
 
     return positions
 
+# Function to find contours of red bacteria in the raw camera image and draw them
 def findContours(raw_image_buffer):
-    """
-    Trova i contorni dei batteri rossi nell'immagine raw della camera e li disegna.
-    
-    Args:
-        raw_image_buffer: Buffer raw dell'immagine dalla camera
-    
-    Returns:
-        img_bgr: Immagine BGR con i contorni disegnati
-    """
-    # Converti l'immagine raw in formato BGR
+
+    # Convert the raw image buffer to a BGR image
     img_bgra = np.frombuffer(raw_image_buffer, np.uint8).reshape(img_height, img_width, 4)
     img_bgr = cv2.cvtColor(img_bgra, cv2.COLOR_BGRA2BGR)
     
-    # --- RILEVAMENTO BATTERI ROSSI ---
+    # Detect red bacteria using color thresholding
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     lower_red1 = np.array([0, 100, 100])
     upper_red1 = np.array([10, 255, 255])
@@ -399,14 +395,14 @@ def findContours(raw_image_buffer):
     kernel = np.ones((5, 5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
-    # Trova contorni dei batteri
+    # Find contours in the mask by using OpenCV
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # --- DISEGNO DIRETTO SULL'IMMAGINE BGR ---
+    # Draw contours on the original image
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
         
-        # Disegna rettangoli concentrici per maggiore visibilità
+        # Draw a rectangle around the contour
         for thickness in range(1, 4):
             cv2.rectangle(img_bgr, 
                          (max(0, x - thickness), max(0, y - thickness)), 
@@ -414,7 +410,7 @@ def findContours(raw_image_buffer):
                          (0, 255, 0),  # Verde brillante in formato BGR
                          2)
         
-        # Disegna un cerchio pieno al centro
+        # Draw a circle at the center of the contour
         center_x = x + w // 2
         center_y = y + h // 2
         radius = max(5, max(w, h) // 8)
@@ -424,23 +420,22 @@ def findContours(raw_image_buffer):
     return img_bgr
 
 # Function to update the Webots display with a given BGR image
-def _update_display(image_bgr_to_show):
+def update_display(image_bgr_to_show):
+    
+    # Convert the BGR image to BGRA format for Webots display
     img_bgra = cv2.cvtColor(image_bgr_to_show, cv2.COLOR_BGR2BGRA)
     img_buffer = img_bgra.tobytes()
+    
     # Basic check to ensure display is somewhat valid before using
     if display.getWidth() > 0 and display.getHeight() > 0:
         ir = display.imageNew(img_buffer, display.BGRA, img_width, img_height)
-        if ir: # Check if imageNew was successful
+        if ir:
             display.imagePaste(ir, 0, 0, False)
             display.imageDelete(ir)
-        # else:
-            # print("Debug: display.imageNew failed") # Optional for debugging
-    # else:
-        # print("Debug: display not properly initialized or has zero dimensions") # Optional for debugging
 
-# This function processes the raw camera image to detect markers, draw them,
-# calculate grid and cell centers, and returns the annotated image and centers.
+# Function to process the raw camera image, detect markers, and draw them
 def run_detection_and_get_annotated_image(raw_camera_image_buffer):
+    
     # Get BGR image with basic ArUco markers drawn from the raw camera buffer
     img_bgr_with_aruco, corners, ids = detect_and_draw_markers(raw_camera_image_buffer)
     
@@ -450,6 +445,7 @@ def run_detection_and_get_annotated_image(raw_camera_image_buffer):
     calculated_world_centers = {}
     
     if ids is not None and len(ids) >= 4:
+        
         # Update global marker positions (these are used by interpolation functions)
         update_world_positions()
         update_cam_positions(corners, ids)
@@ -461,7 +457,6 @@ def run_detection_and_get_annotated_image(raw_camera_image_buffer):
         rows, cols = compute_grid_dims()
         
         # Overlay grid on the image that already has ArUco markers
-        # draw_grid_overlay returns (image_with_grid_bgr, centers2d)
         final_annotated_image_bgr, centers2d = draw_grid_overlay(final_annotated_image_bgr, quad_pts, rows, cols)
         
         # Interpolate 3D cell centers (these use global cam_positions and world_positions)
@@ -470,7 +465,7 @@ def run_detection_and_get_annotated_image(raw_camera_image_buffer):
 
     return final_annotated_image_bgr, calculated_cam_centers, calculated_world_centers
 
-# Check if moved
+# Function to check if the robot has moved from a target position
 def check_if_moved(targetPosition):
 
     # Get the current joint angles
@@ -498,27 +493,30 @@ def get_current_joint_angles():
     return [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
 
 
-# Store the current state of the arm
-# STANDBY, DETECTING, MONITORING, STERILIZING = range(4) # Old states
-# New states for more granular control over movement and actions
+# Definition of the states machine of the robot
 STANDBY, MOVING_TO_DETECT_SPOT, DETECTING_AT_SPOT, AWAITING_CONFIRMATION, MONITORING_SELECT_CELL, MOVING_TO_CELL, STERILIZING_CELL = range(7)
 current_state = STANDBY
 
+# Dictionaries to store camera and world centers of cells
 cam_centers = {}
 world_centers = {}
+
+# Variables to store the current cell index and timestep sum
 current_cell_index = 0
 timestep_sum = 0
 
-# Store the current state of the world
+# Variable to store the current state of the bacteria spawning
 bacteria_spawned = False
 
-# AGGIUNTA PER INTEGRAZIONE - Mappatura batterio-cella
+# Dictionary to map bacteria to cells
 batteri_dict = {}
 
 # Variables for trajectory management
 active_trajectory = None
 trajectory_step_index = 0
-g_target_for_check_if_moved = None # Stores the world coordinate target for check_if_moved
+
+# Stores the world coordinate target for check_if_moved
+g_target_for_check_if_moved = None
 
 # Flags to control one-time console messages
 standby_prompt_shown = False
@@ -537,20 +535,29 @@ while supervisor.step(timeStep) != -1:
         
         print("Stop command received ('x'). Returning to STANDBY.")
         current_state = STANDBY
-        standby_prompt_shown = False # Ensure prompt shows on next STANDBY entry
-        confirmation_prompt_shown = False # Reset this flag as well
+
+        # Reset all state variables
+        standby_prompt_shown = False
+        confirmation_prompt_shown = False
+        bacteria_spawned = False
+        
+        # Reset trajectory and step index
         active_trajectory = None
         trajectory_step_index = 0
         g_target_for_check_if_moved = None
+        
+        # Reset camera and world centers
         cam_centers = {}
         world_centers = {}
+
+        # Reset current cell index and bacteria dictionary
         current_cell_index = 0
-        bacteria_spawned = False # Reset bacteria spawning status
-        batteri_dict = {} # Reset bacteria mapping
-        last_known_annotated_image = None # Clear the stored annotated image
+        batteri_dict = {}
+
+        # Clear the last known annotated image for the display
+        last_known_annotated_image = None
         
-        # Optionally, turn off light_killer if it could be on
-        # light_killer.set(0) 
+        # Print a message to indicate the robot has stopped
         print("Robot stopped and reset to STANDBY.")
         
         # Clear remaining key presses for this step
@@ -559,43 +566,39 @@ while supervisor.step(timeStep) != -1:
         # Continue to the next iteration to process the STANDBY state immediately
         continue
 
-
     # Start with an image that has ArUco markers drawn if any are visible.
     image_to_display_bgr, _, _ = detect_and_draw_markers(raw_camera_image_buffer)
 
+    # In current state STANDBY, the controller is ready to start the detection at any time
     if current_state == STANDBY:
-        # If a previously annotated image with a grid exists and world_centers is populated,
-        # use it for display. Otherwise, the default image_to_display_bgr (basic markers) is used.
+        
+        # If a previously annotated image with a grid exists and world_centers is populated, use it for display.
         if last_known_annotated_image is not None and world_centers:
             image_to_display_bgr = last_known_annotated_image
 
-        # Killer spotlight logic
+        # Get the killer spotlight from supervisor. If it is not found, print an error. Otherwise, get the intensity field and set it to 0.
         killer_spotlight = supervisor.getFromDef("killerspotlight")
 
         if killer_spotlight is None:
-            print("Errore: nodo 'killerspotlight' non trovato.")
+            print("Error: 'killerspotlight' node not found.")
         else:
-            # Ottieni il campo intensity
             intensitykiller_field = killer_spotlight.getField("intensity")
             if intensitykiller_field is None:
-                print("Errore: campo 'intensity' non trovato in 'killerspotlight'.")
+                print("Error: 'intensity' field not found in 'killerspotlight'.")
             else:
-                # Imposta l'intensità a 0
                 intensitykiller_field.setSFFloat(0.0)
         
-        # Detector spotlight logic
+        # Get the detector spotlight from supervisor. If it is not found, print an error. Otherwise, get the intensity field and set it to 0.
         detector_spotlight = supervisor.getFromDef("detectorspotlight")
 
         if detector_spotlight is None:
-            print("Errore: nodo 'detectorspotlight' non trovato.")
+            print(f"Error: node 'detectorspotlight' not found.")
         else:
-            # Get the field intensity
             intensitydetector_field = detector_spotlight.getField("intensity")
 
             if intensitydetector_field is None:
-                print("Errore: campo 'intensity' non trovato in 'detectorspotlight'.")
+                print(f"Error: field 'intensity' not found in 'detectorspotlight'.")
             else:
-                # Set the intensity to 0
                 intensitydetector_field.setSFFloat(0.0)
         
         # If no active trajectory, show the standby prompt only once
@@ -625,131 +628,171 @@ while supervisor.step(timeStep) != -1:
                     max_iter=IKPY_MAX_ITERATIONS,
                     initial_position=initial_joint_positions
                 )
+            
             except Exception as e:
+                
+                # If IK fails, print an error and reset the trajectory.
                 print(f"IK failed for initial detection spot {target_position_world} with orientation: {e}")
-                # supervisor.simulationQuit(1) # Or handle error appropriately
-                # current_state = STANDBY # Already in STANDBY, or will be due to stop command
-                active_trajectory = None # Ensure no active trajectory
-                continue # Stay in standby or go to an error state
+                active_trajectory = None
+                continue
 
+            # Set the actve trajectory to move to the target position
             active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 10).q
             trajectory_step_index = 0
             
+            # Set the target for check_if_moved to the target position
             g_target_for_check_if_moved = target_position_world
+
+            # Change the state to MOVING_TO_DETECT_SPOT
             current_state = MOVING_TO_DETECT_SPOT
 
-    # If we are moving to the detection spot, execute the trajectory
+    # If on state MOVING_TO_DETECT_SPOT, move the robot to the detection spot
     elif current_state == MOVING_TO_DETECT_SPOT:
         
+        # If there's an active trajectory, move the robot along it
         if active_trajectory is not None and trajectory_step_index < len(active_trajectory):
-           
+
+            # Get the current joint targets from the active trajectory
             current_joint_targets = active_trajectory[trajectory_step_index]
             
+            # Set the motors to the current joint targets
             for i in range(len(motors)):
                 motors[i].setPosition(current_joint_targets[i + 1])
+            
+            # Increase the trajectory step index
             trajectory_step_index += 1
         
-        else: # Trajectory complete or no trajectory
-            if active_trajectory is not None and trajectory_step_index >= len(active_trajectory): # Ensure final point is commanded
+        # If the trajectory is complete, or if no trajectory is set, check if the robot has arrived at the target position
+        else:
+
+            # If there's an active trajectory but we reached the end, ensure the final joint targets are set
+            if active_trajectory is not None and trajectory_step_index >= len(active_trajectory):
+                 
+                 # Get the final joint targets from the active trajectory
                  final_joint_targets = active_trajectory[-1]
+
+                 # Set the motors to the final joint targets
                  for i in range(len(motors)):
                     motors[i].setPosition(final_joint_targets[i + 1])
             
-            # Add a small delay or check for actual movement if check_if_moved is too sensitive
-            # For now, directly check if moved
+            # Check if the robot has arrived at the target position.
+            # If it has, change state to DETECTING_AT_SPOT. Then clear the trajectory.
             if g_target_for_check_if_moved is not None and check_if_moved(g_target_for_check_if_moved):
                 print("Arrived at detection spot.")
                 current_state = DETECTING_AT_SPOT
-                active_trajectory = None # Clear trajectory
+                active_trajectory = None
+            
+            # If there isn't any active trajectory, change state to STANDBY
             elif g_target_for_check_if_moved is None and active_trajectory is None:
-                # This case might happen if IK failed in STANDBY and we jumped here senza un target
                 print("Error: No target to move to for detection. Returning to STANDBY.")
                 current_state = STANDBY
+            
+            # If the robot has not arrived yet, continue moving
             else:
                 print("Waiting to arrive at detection spot...")
 
-
+    # If on state DETECTING_AT_SPOT, perform detection and prepare for confirmation
     elif current_state == DETECTING_AT_SPOT:
-        print("State: DETECTING_AT_SPOT")
-        # Perform full detection, get annotated image and cell centers
-        # This uses the raw_camera_image_buffer obtained at the start of the loop
+        
+        # Perform detection and get the annotated image with cell centers
         annotated_image, detected_cam_centers, detected_world_centers = run_detection_and_get_annotated_image(raw_camera_image_buffer)
         
-        image_to_display_bgr = annotated_image # Show the detailed image for this state
+        # Show the detailed image for this state
+        image_to_display_bgr = annotated_image
         
         # Update global cam_centers and world_centers for use in this state and potentially others
         cam_centers = detected_cam_centers
         world_centers = detected_world_centers
 
-        # Store the annotated image if detection was successful
+        # If there are world centers detected, update the last known annotated image. Else, go back to standby. Also reset the active trajectory.
         if world_centers:
             last_known_annotated_image = image_to_display_bgr.copy()
         else:
-            last_known_annotated_image = None # Clear if no centers found
+            last_known_annotated_image = None
 
-        if not world_centers: # Check the updated global world_centers
+        if not world_centers:
             print("Error: No cell centers found at detection spot. Check camera view/marker setup. Returning to STANDBY.")
             current_state = STANDBY 
-            active_trajectory = None # Ensure no trajectory active
+            active_trajectory = None
             continue
 
-        # MODIFICATA - Bacteria spawning logic con mappatura
+        # If there are not bacteria spawned yet, spawn them in the detected cells
         if not bacteria_spawned:
             batteri_dict = spawn_bacteria_in_cells(world_centers, num_bacteria=5) 
             bacteria_spawned = True
         
-        # Transition to awaiting confirmation instead of directly to monitoring
-        # print("Markers detected. Initiate sterilization? (y/n)") # Moved to AWAITING_CONFIRMATION state
+        # The controller is now ready to confirm the detection and proceed with sterilization. So, change the state to AWAITING_CONFIRMATION.
         current_state = AWAITING_CONFIRMATION
-        confirmation_prompt_shown = False # Ensure prompt shows on entry to AWAITING_CONFIRMATION
-        # current_cell_index = 0 # Reset cell index for new scan # Moved to after 'y' confirmation
-        # current_state = MONITORING_SELECT_CELL # Original line
-        # print("Detection complete. Transitioning to MONITORING_SELECT_CELL.") # Original line
 
+        # Ensure prompt shows on entry to state AWAITING_CONFIRMATION
+        confirmation_prompt_shown = False
+
+    # If on state AWAITING_CONFIRMATION, wait for user input to confirm sterilization
     elif current_state == AWAITING_CONFIRMATION:
-        # If a previously annotated image with a grid exists and world_centers is populated,
-        # use it for display. Otherwise, the default image_to_display_bgr (basic markers) is used.
+        
+        # If a previously annotated image with a grid exists and world_centers is populated, use it for display. Otherwise, use the last known annotated image.
         if last_known_annotated_image is not None and world_centers:
             image_to_display_bgr = last_known_annotated_image
 
-        # It's important to print the prompt every time we are in this state,
-        # as the key press might not have happened in the same simulation step.
-        # print("State: AWAITING_CONFIRMATION. Markers detected. Initiate sterilization? (y/n)") # Old repetitive print
+        # If confirmation prompt has not been shown yet, print the prompt
         if not confirmation_prompt_shown:
             print("State: AWAITING_CONFIRMATION. Markers detected. Initiate sterilization? (y/n)")
             confirmation_prompt_shown = True
-
+        
+        # Wait for user input.
+        # If 'y' or 'Y' are pressed, proceed to sterilization.
         if key == ord('Y') or key == ord('y'):
             print("'y' received. Starting sterilization process.")
-            confirmation_prompt_shown = False # Reset for next entry to this state
-            current_cell_index = 0 # Reset cell index for new scan
+
+            # Reset the confirmation prompt for next entry to this state
+            confirmation_prompt_shown = False
+
+            # Set the current cell index to 0 to start monitoring cells
+            current_cell_index = 0
+
+            # Change the state to MONITORING_SELECT_CELL
             current_state = MONITORING_SELECT_CELL
-            # standby_prompt_shown = False # Not needed here, will be handled if/when returning to STANDBY
-            print("Transitioning to MONITORING_SELECT_CELL.")
+        
+        # If 'n' or 'N' are pressed, go back to state STANDBY.
         elif key == ord('N') or key == ord('n'):
             print("'n' received. Returning to STANDBY.")
-            confirmation_prompt_shown = False # Reset for next entry to this state
+
+            # Reset the confirmation prompt and other relevant variables
+            confirmation_prompt_shown = False
+
+            # Reset the state to STANDBY
             current_state = STANDBY
-            standby_prompt_shown = False # Ensure prompt shows on entry to STANDBY
+
+            # Reset the trajectory and step index
+            standby_prompt_shown = False
             active_trajectory = None
-            # Reset relevant variables for a clean standby
+            
+            # Reset dictionaries
             cam_centers = {}
             world_centers = {}
-            # bacteria_spawned = False # Decide if bacteria should despawn or stay for next attempt
-            # For now, let's keep bacteria if they were spawned, user might want to try again soon.
-            # If a full reset is desired on 'n', uncomment the line above.
-            print("Robot returning to STANDBY. Press 's' to try again.")
-
+    
+    # If on state MONITORING_SELECT_CELL, select the next cell to move to
     elif current_state == MONITORING_SELECT_CELL:
-        print(f"State: MONITORING_SELECT_CELL. Current cell index: {current_cell_index}")
+        
+        # Print the current cell index and check if there are world centers available
+        print(f"Current cell index: {current_cell_index}")
+
+        # If there are world centers available, proceed to move to the next cell
         if world_centers and current_cell_index < len(world_centers):
+
+            # Get the target world position for the current cell index
             next_target_world = list(world_centers.values())[current_cell_index]
             
+            # Convert the target world position to robot coordinates
             x_cell_robot, y_cell_robot, z_cell_robot = convert_webots_to_robot_coordinates(next_target_world)
+            
+            # Prepare the target position for inverse kinematics
             ik_target_robot = np.array([x_cell_robot, y_cell_robot, z_cell_robot])
 
+            # Get the current joint angles to use as the initial guess for IK
             initial_joint_positions = get_current_joint_angles()
             
+            # Solve the inverse kinematics to find the joint positions for the target position
             try:
                 target_joint_positions = chain.inverse_kinematics(
                     ik_target_robot,
@@ -759,95 +802,137 @@ while supervisor.step(timeStep) != -1:
                     initial_position=initial_joint_positions
                 )
             except Exception as e:
+
+                # If IK fails, print an error message and skip to the next cell
                 print(f"IK failed for cell {current_cell_index} at {next_target_world} and orientation: {e}")
-                current_cell_index += 1 
-                active_trajectory = None # Ensure no active trajectory
+                current_cell_index += 1
+
+                # Reset the active trajectory
+                active_trajectory = None
+
+                # If we have processed all cells, go to state STANDBY
                 if current_cell_index >= len(world_centers):
                     print("Finished all cells or remaining cells failed IK. Returning to STANDBY.")
                     current_state = STANDBY
-                # else: continue to MONITORING_SELECT_CELL for the next cell
                 continue 
-
+            
+            # Plan the trajectory to move to the target joint positions
             active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 10).q
             
+            # Set the trajectory step index to 0
             trajectory_step_index = 0
             
+            # Set the target for check_if_moved to the next target world position
             g_target_for_check_if_moved = next_target_world
 
+            # Change the state to MOVING_TO_CELL
             current_state = MOVING_TO_CELL
             print(f"Moving to cell {current_cell_index} (target: {next_target_world})")
         
         else:
-            print("All cells processed or no cells to process. Returning to STANDBY.")
+            # If there are no more cells to process, print a message and go back to STANDBY. Also, reset the active trajectory.
+            print("All cells processed or no cells to process. Going back to STANDBY.")
             current_state = STANDBY
-            active_trajectory = None # Clear trajectory
-
+            active_trajectory = None
+    
+    # If on state MOVING_TO_CELL, move the robot to the target cell
     elif current_state == MOVING_TO_CELL:
         
+        # If there's an active trajectory, move the robot along it
         if active_trajectory is not None and trajectory_step_index < len(active_trajectory):
+            
+            # Get the current joint targets from the active trajectory, according to the trajectory step index
             current_joint_targets = active_trajectory[trajectory_step_index]
+            
+            # Set the joint positions for the motors
             for i in range(len(motors)):
                 motors[i].setPosition(current_joint_targets[i + 1])
+            
+            # Increase the trajectory step index
             trajectory_step_index += 1
         
-        else: # Trajectory complete
-            if active_trajectory is not None and trajectory_step_index >= len(active_trajectory): # Ensure final point is commanded
+        # If the trajectory is complete, check if the robot has arrived at the target position
+        else:
+
+            # If there's an active trajectory but we reached the end, ensure the final joint targets are set
+            if active_trajectory is not None and trajectory_step_index >= len(active_trajectory):
                  final_joint_targets = active_trajectory[-1]
                  for i in range(len(motors)):
                     motors[i].setPosition(final_joint_targets[i + 1])
-
+            
+            # If the robot has arrived at the target position, change state to STERILIZING_CELL
             if g_target_for_check_if_moved is not None and check_if_moved(g_target_for_check_if_moved):
+                
+                # Print a message indicating arrival at the cell
                 print(f"Arrived at cell {current_cell_index}.")
+
+                # Change the state to STERILIZING_CELL
                 current_state = STERILIZING_CELL
+                
+                # Reset the trajectory and step index
                 timestep_sum = 0 
-                active_trajectory = None # Clear trajectory
+                active_trajectory = None
+            
+            # If there isn't any active trajectory, go back to MONITORING_SELECT_CELL
             elif g_target_for_check_if_moved is None and active_trajectory is None:
-                # This case might happen if IK failed and we jumped here senza un target
+                
+                # Print a message indicating no active trajectory
                 print(f"Error: No target to move to for cell {current_cell_index}. Returning to MONITORING_SELECT_CELL.")
-                current_state = MONITORING_SELECT_CELL # Or STANDBY
-                current_cell_index +=1 # Try next cell
+
+                # Go back to MONITORING_SELECT_CELL to try the next cell
+                current_state = MONITORING_SELECT_CELL
+                current_cell_index +=1
+            
+            # If the robot has not arrived yet, continue moving
             else:
                 print(f"Waiting to arrive at cell {current_cell_index}...")
 
+    # If on state STERILIZING_CELL, inspect the current cell and sterilize if bacteria are present
     elif current_state == STERILIZING_CELL:
+        
+        # Print the current cell index and its position
         print(f"Inspecting cell {current_cell_index} at position {list(world_centers.values())  [current_cell_index]}")
 
-        # Ottieni riferimenti alle luci spotlight
+        # Get the spotlight nodes for detector and killer lights
         detector_spotlight = supervisor.getFromDef("detectorspotlight")
         killer_spotlight = supervisor.getFromDef("killerspotlight")
 
+        # If the nodes are found, get their intensity fields
         if detector_spotlight:
             intensitydetector_field = detector_spotlight.getField("intensity")
         if killer_spotlight:
             intensitykiller_field = killer_spotlight.getField("intensity")
 
-        # Ottieni il campo "children" dal nodo Group
+        # Get the children field from the bacteria group
         children_field = bacteria_group.getField("children")
 
-        # Ottieni batteri presenti nella cella
+        # Get the available bacteria in the current cell index
         valore = batteri_dict.get(current_cell_index, [])
+        
         if isinstance(valore, int):
             batteri_presenti = [valore]
         else:
             batteri_presenti = valore
 
-        # FASE 1: RILEVAMENTO (SEMPRE ATTIVO)
-        print(f"Attivando detector per scansione cella {current_cell_index}")
+        # WARNING: Here we start the sterilization process for the current cell.
+        
+        # Step 1 - detection
+        print(f"Detecting bacteria into cell by index {current_cell_index}")
 
-        # Accendi luce detector per il rilevamento
+        # Turn on the detector spotlight
         if detector_spotlight and intensitydetector_field:
             intensitydetector_field.setSFFloat(20.0)
 
-        # Aggiorna immediatamente l'immagine per mostrare la luce detector
+        # Update the image on the display to show the detector light
         current_raw = camera.getImage()
         image_to_display_bgr = findContours(current_raw)
-        _update_display(image_to_display_bgr)
+        update_display(image_to_display_bgr)
 
-        # Se ci sono batteri, rendili visibili gradualmente
+        # If there are bacteria in the current cell, print their indices. Also make them visible gradually (simulation of giving them light).
         if len(batteri_presenti) > 0:
-            print(f"Batteri rilevati nella cella {current_cell_index}: {batteri_presenti}")
+            print(f"Found bacteria in cell index {current_cell_index}: {batteri_presenti}")
 
-            # Rendi visibili i batteri gradualmente con aggiornamento continuo dell'immagine
+            # Make bacteria visible gradually
             for i in batteri_presenti:
                 if i < children_field.getCount():
                     bacterium = children_field.getMFNode(i)
@@ -862,49 +947,55 @@ while supervisor.step(timeStep) != -1:
                             transparency_field.setSFFloat(transparency)
                             supervisor.step(timeStep)
 
-                            # Aggiorna l'immagine ogni 10 step per mostrare il processo graduale
+                            # Update the image every 10 steps to show the visibility change
                             if step % 10 == 0:
                                 current_raw = camera.getImage()
                                 image_to_display_bgr = findContours(current_raw)
-                                _update_display(image_to_display_bgr)
+                                update_display(image_to_display_bgr)
+        
+        # If no bacteria are present, print a message and wait for 1 second with continuous updates
         else:
-            print(f"Nessun batterio rilevato nella cella {current_cell_index}")
-            # Attendi 1 secondo con rilevamento attivo e aggiornamento continuo
+            print(f"No bacteria found on cell by index {current_cell_index}")
+
+            # Wait for 1 second with continuous updates
             wait_steps = int(10000 / timeStep)
+            
             for step in range(wait_steps):
                 supervisor.step(timeStep)
-                # Aggiorna l'immagine ogni 20 step durante l'attesa
+                
+                # Update the image every 20 steps to show the detector light
                 if step % 20 == 0:
                     current_raw = camera.getImage()
                     image_to_display_bgr = findContours(current_raw)
-                    _update_display(image_to_display_bgr)
+                    update_display(image_to_display_bgr)
 
-        # FASE 2: STERILIZZAZIONE (SOLO SE CI SONO BATTERI)
+        # Step 2 - sterilization (if bacteria are present)
         if len(batteri_presenti) > 0:
-            print(f"Iniziando sterilizzazione nella cella {current_cell_index}")
+            print(f"Sterilizing cell by index {current_cell_index}")
 
-            # Spegni luce detector e accendi luce killer
+            # Turn off the detection spotlight and turn on the killer spotlight
             if detector_spotlight and intensitydetector_field:
                 intensitydetector_field.setSFFloat(0.0)
             if killer_spotlight and intensitykiller_field:
                 intensitykiller_field.setSFFloat(20.0)
 
-            # Aggiorna immediatamente l'immagine per mostrare la luce UV
+            # Update the image on the display to show the killer light
             current_raw = camera.getImage()
             image_to_display_bgr = findContours(current_raw)
-            _update_display(image_to_display_bgr)
+            update_display(image_to_display_bgr)
 
-            # Attendi 1 secondo per la sterilizzazione con aggiornamento continuo
+            # Wait for 1 second with continuous updates to show the killer light
             wait_steps = int(1000 / timeStep)
             for step in range(wait_steps):
                 supervisor.step(timeStep)
-                # Aggiorna l'immagine ogni 20 step per mostrare la luce UV
+                
+                # Update the image every 20 steps to show the killer light
                 if step % 20 == 0:
                     current_raw = camera.getImage()
                     image_to_display_bgr = findContours(current_raw)
-                    _update_display(image_to_display_bgr)
+                    update_display(image_to_display_bgr)
 
-            # Rendi i batteri invisibili (sterilizzati) con aggiornamento continuo
+            # Make bacteria invisible gradually (simulation of sterilization)
             for i in batteri_presenti:
                 if i < children_field.getCount():
                     bacterium = children_field.getMFNode(i)
@@ -919,39 +1010,41 @@ while supervisor.step(timeStep) != -1:
                             transparency_field.setSFFloat(transparency)
                             supervisor.step(timeStep)
 
-                            # Aggiorna l'immagine ogni 10 step per mostrare il processo di sterilizzazione
+                            # Update the image every 10 steps to show the visibility change
                             if step % 10 == 0:
                                 current_raw = camera.getImage()
                                 image_to_display_bgr = findContours(current_raw)
-                                _update_display(image_to_display_bgr)
+                                update_display(image_to_display_bgr)
 
-            # Spegni luce killer
+            # Turn off the killer spotlight after sterilization
             if killer_spotlight and intensitykiller_field:
                 intensitykiller_field.setSFFloat(0.0)
 
-            # Aggiorna l'immagine finale senza luce UV
+            # Update the image on the display to show the final state after sterilization
             current_raw = camera.getImage()
             image_to_display_bgr = findContours(current_raw)
-            _update_display(image_to_display_bgr)
+            update_display(image_to_display_bgr)
 
-            print(f"Sterilizzazione batteri completata nella cella {current_cell_index}")
+            print(f"Cell by index {current_cell_index} has been sterilized successfully.")
         else:
-            # Solo spegni il detector se non ci sono batteri da sterilizzare
+            # Just turn off the detector spotlight if no bacteria were found
             if detector_spotlight and intensitydetector_field:
                 intensitydetector_field.setSFFloat(0.0)
 
-            # Aggiorna l'immagine finale
+            # Update the image on the display to show the final state after inspection
             current_raw = camera.getImage()
             image_to_display_bgr = findContours(current_raw)
-            _update_display(image_to_display_bgr)
+            update_display(image_to_display_bgr)
 
-            print(f"Nessun batterio da sterilizzare nella cella {current_cell_index}, processo completato.")
+            print(f"No need to sterilize cell by index {current_cell_index}, process done.")
 
-        # Passa alla cella successiva
+        # Go to the next cell by incrementing the current cell index
         current_cell_index += 1
         timestep_sum = 0
+
+        # Change the state back to MONITORING_SELECT_CELL to check for the next cell
         current_state = MONITORING_SELECT_CELL
         print(f"Inspection/sterilization of cell {current_cell_index-1} complete. Checking for next cell.")
     
     # At the end of each loop iteration, update the display with the chosen image_to_display_bgr
-    _update_display(image_to_display_bgr)
+    update_display(image_to_display_bgr)
