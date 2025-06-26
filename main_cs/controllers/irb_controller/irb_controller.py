@@ -20,11 +20,12 @@ import cv2.aruco as aruco
 # Import robotics libraries. We use ikpy for inverse kinematics and Robotics Toolbox by Peter Corke for trajectory generation.
 import ikpy
 from ikpy.chain import Chain
-from roboticstoolbox.tools.trajectory import jtraj
 
 # Check if Numpy has the disp function, if not, define it (not all versions of Numpy need this)
 if not hasattr(np, 'disp'):
     np.disp = lambda x, *args, **kwargs: print(x, *args, **kwargs)
+
+from roboticstoolbox.tools.trajectory import jtraj
 
 # Define max iterations for IKPY library. Higher values can lead to better accuracy but may increase computation time.
 IKPY_MAX_ITERATIONS = 100
