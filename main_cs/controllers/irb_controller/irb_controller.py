@@ -257,14 +257,15 @@ def interpolate_cam_centers(centers2d, rows, cols):
 
 # Function to interpolate world centers from sorted marker IDs
 def interpolate_world_centers(sorted_ids, rows, cols):
-    
+    # Ensure we have exactly 4 markers
     p0, p1, p2, p3 = [world_positions[id_] for id_ in sorted_ids]
-    
+    # Initialize a dictionary to hold the 3D centers of the grid cells
     centers3d = {}
-    
+    # Iterate through the grid cells and compute their 3D centers
     for i in range(rows):
         for j in range(cols):
             u, v = (j + 0.5) / cols, (i + 0.5) / rows
+            # Compute the 3D center of the cell using bilinear interpolation
             centers3d[(i,j)] = (
                 (1-u) * (1-v) * p0 + u *(1-v) * p1 + u * v * p2 + (1-u) * v * p3
             )
@@ -281,6 +282,7 @@ def print_cell_table(cam_centers, world_centers):
         w = world_centers[key]
         print(f"({key[0]},{key[1]})        |{c[0]:8.3f}{c[1]:8.3f}{c[2]:8.3f} ||{w[0]:8.3f}{w[1]:8.3f}{w[2]:8.3f}")
 
+# Function to convert Webots coordinates to robot coordinates
 def convert_webots_to_robot_coordinates(targetPosition):
 
     # Get the arm position in Webots coordinates.
