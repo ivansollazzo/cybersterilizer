@@ -164,9 +164,11 @@ def compute_grid_dims():
     # Compute the area of the quadrilateral formed by the four markers
     corners = [world_positions[i] for i in range(4)]
 
-    # Calculate the area using the cross product of two vectors
+    # Calculate the area of the quadrilateral by dividing it into two triangles
+    # and summing their areas.
     a1 = 0.5 * np.linalg.norm(np.cross(corners[1]-corners[0], corners[2]-corners[0]))
     a2 = 0.5 * np.linalg.norm(np.cross(corners[2]-corners[0], corners[3]-corners[0]))
+    # Convert total area from m^2 to cm^2
     total_area_cm2 = (a1 + a2) * 1e4
 
     # Calculate the number of cells based on the target cell area
