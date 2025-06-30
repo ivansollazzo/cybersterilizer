@@ -25,6 +25,7 @@ from ikpy.chain import Chain
 if not hasattr(np, 'disp'):
     np.disp = lambda x, *args, **kwargs: print(x, *args, **kwargs)
 
+# Import trajectory generation tools from Robotics Toolbox
 from roboticstoolbox.tools.trajectory import jtraj
 
 # Define max iterations for IKPY library. Higher values can lead to better accuracy but may increase computation time.
@@ -164,10 +165,10 @@ def compute_grid_dims():
     # Compute the area of the quadrilateral formed by the four markers
     corners = [world_positions[i] for i in range(4)]
 
-    # Calculate the area of the quadrilateral by dividing it into two triangles
-    # and summing their areas.
+    # Calculate the area of the quadrilateral by dividing it into two triangles and summing their areas.
     a1 = 0.5 * np.linalg.norm(np.cross(corners[1]-corners[0], corners[2]-corners[0]))
     a2 = 0.5 * np.linalg.norm(np.cross(corners[2]-corners[0], corners[3]-corners[0]))
+
     # Convert total area from m^2 to cm^2
     total_area_cm2 = (a1 + a2) * 1e4
 
@@ -257,15 +258,14 @@ def interpolate_cam_centers(centers2d, rows, cols):
 
 # Function to interpolate world centers from sorted marker IDs
 def interpolate_world_centers(sorted_ids, rows, cols):
-    # Ensure we have exactly 4 markers
+    
     p0, p1, p2, p3 = [world_positions[id_] for id_ in sorted_ids]
-    # Initialize a dictionary to hold the 3D centers of the grid cells
+    
     centers3d = {}
-    # Iterate through the grid cells and compute their 3D centers
+    
     for i in range(rows):
         for j in range(cols):
             u, v = (j + 0.5) / cols, (i + 0.5) / rows
-            # Compute the 3D center of the cell using bilinear interpolation
             centers3d[(i,j)] = (
                 (1-u) * (1-v) * p0 + u *(1-v) * p1 + u * v * p2 + (1-u) * v * p3
             )
@@ -282,7 +282,6 @@ def print_cell_table(cam_centers, world_centers):
         w = world_centers[key]
         print(f"({key[0]},{key[1]})        |{c[0]:8.3f}{c[1]:8.3f}{c[2]:8.3f} ||{w[0]:8.3f}{w[1]:8.3f}{w[2]:8.3f}")
 
-# Function to convert Webots coordinates to robot coordinates
 def convert_webots_to_robot_coordinates(targetPosition):
 
     # Get the arm position in Webots coordinates.
@@ -498,7 +497,7 @@ def get_current_joint_angles():
     return [0] + [m.getPositionSensor().getValue() for m in motors] + [0, 0, 0]
 
 
-# Definition of the states machine of the robot
+# Definition of the state machine of the robot
 STANDBY, MOVING_TO_DETECT_SPOT, DETECTING_AT_SPOT, AWAITING_CONFIRMATION, MONITORING_SELECT_CELL, MOVING_TO_CELL, STERILIZING_CELL = range(7)
 current_state = STANDBY
 
@@ -526,6 +525,9 @@ g_target_for_check_if_moved = None
 # Flags to control one-time console messages
 standby_prompt_shown = False
 confirmation_prompt_shown = False
+
+# Flag to control if the robot is coming from sterilization
+coming_from_process = False
 
 # To store the last image with grid for display in STANDBY
 last_known_annotated_image = None
@@ -576,6 +578,51 @@ while supervisor.step(timeStep) != -1:
 
     # In current state STANDBY, the controller is ready to start the detection at any time
     if current_state == STANDBY:
+
+        # If coming from sterilization, process the trajectory
+        if coming_from_process:
+            # If there's an active trajectory, move the robot along it
+            if active_trajectory is not None and trajectory_step_index < len(active_trajectory):
+
+                # Get the current joint targets from the active trajectory
+                current_joint_targets = active_trajectory[trajectory_step_index]
+
+                # Set the motors to the current joint targets
+                for i in range(len(motors)):
+                    motors[i].setPosition(current_joint_targets[i + 1])
+
+                # Increase the trajectory step index
+                trajectory_step_index += 1
+
+            # If the trajectory is complete, or if no trajectory is set, check if the robot has arrived at the target position
+            else:
+
+                # If there's an active trajectory but we reached the end, ensure the final joint targets are set
+                if active_trajectory is not None and trajectory_step_index >= len(active_trajectory):
+
+                     # Get the final joint targets from the active trajectory
+                     final_joint_targets = active_trajectory[-1]
+
+                     # Set the motors to the final joint targets
+                     for i in range(len(motors)):
+                        motors[i].setPosition(final_joint_targets[i + 1])
+
+                # Check if the robot has arrived at the target position.
+                # If it has, change state to DETECTING_AT_SPOT. Then clear the trajectory.
+                if g_target_for_check_if_moved is not None and check_if_moved(g_target_for_check_if_moved):
+                    print("Arrived at standby position.")
+                    active_trajectory = None
+                    coming_from_process = False
+
+                # If there isn't any active trajectory, change state to STANDBY
+                elif g_target_for_check_if_moved is None and active_trajectory is None:
+                    print("Error: No target to move to for detection. Returning to STANDBY.")
+                    current_state = STANDBY
+
+                # If the robot has not arrived yet, continue moving
+                else:
+                    print("Waiting to arrive at standby position...")
+
         
         # If a previously annotated image with a grid exists and world_centers is populated, use it for display.
         if last_known_annotated_image is not None and world_centers:
@@ -607,7 +654,7 @@ while supervisor.step(timeStep) != -1:
                 intensitydetector_field.setSFFloat(0.0)
         
         # If no active trajectory, show the standby prompt only once
-        if not active_trajectory:
+        if active_trajectory is None:
             if not standby_prompt_shown:
                 print("State: STANDBY. Press 's' to start detection sequence, or 'x' to stop (if applicable).")
                 standby_prompt_shown = True
@@ -818,6 +865,42 @@ while supervisor.step(timeStep) != -1:
                 # If we have processed all cells, go to state STANDBY
                 if current_cell_index >= len(world_centers):
                     print("Finished all cells or remaining cells failed IK. Returning to STANDBY.")
+                    
+                    # Prepare for movement to standby position
+                    target_position_world = [0, 0.150, 1]
+
+                    x_robot, y_robot, z_robot = convert_webots_to_robot_coordinates(target_position_world)
+                    ik_target_robot = np.array([x_robot, y_robot, z_robot])
+
+                    initial_joint_positions = get_current_joint_angles()
+
+                    try:
+                        target_joint_positions = chain.inverse_kinematics(
+                            ik_target_robot,
+                            target_orientation=target_orientation_matrix_down,
+                            orientation_mode="all",
+                            max_iter=IKPY_MAX_ITERATIONS,
+                            initial_position=initial_joint_positions
+                        )
+
+                    except Exception as e:
+
+                        # If IK fails, print an error and reset the trajectory.
+                        print(f"IK failed for initial detection spot {target_position_world} with orientation: {e}")
+                        active_trajectory = None
+                        continue
+                    
+                    # Set the actve trajectory to move to the target position
+                    active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 10).q
+                    trajectory_step_index = 0
+
+                    # Set the target for check_if_moved to the target position
+                    g_target_for_check_if_moved = target_position_world
+
+                    # Set the flag to indicate we are coming from a process
+                    coming_from_process = True
+
+                    # Change the state to STANDBY              
                     current_state = STANDBY
                 continue 
             
@@ -837,8 +920,42 @@ while supervisor.step(timeStep) != -1:
         else:
             # If there are no more cells to process, print a message and go back to STANDBY. Also, reset the active trajectory.
             print("All cells processed or no cells to process. Going back to STANDBY.")
+
+            # Prepare for movement to standby position
+            target_position_world = [0, 0.150, 1]
+
+            x_robot, y_robot, z_robot = convert_webots_to_robot_coordinates(target_position_world)
+            ik_target_robot = np.array([x_robot, y_robot, z_robot])
+
+            initial_joint_positions = get_current_joint_angles()
+
+            try:
+                target_joint_positions = chain.inverse_kinematics(
+                    ik_target_robot,
+                    target_orientation=target_orientation_matrix_down,
+                    orientation_mode="all",
+                    max_iter=IKPY_MAX_ITERATIONS,
+                    initial_position=initial_joint_positions
+                )
+
+            except Exception as e:
+                # If IK fails, print an error and reset the trajectory.
+                print(f"IK failed for initial detection spot {target_position_world} with orientation: {e}")
+                active_trajectory = None
+                continue
+                    
+            # Set the actve trajectory to move to the target position
+            active_trajectory = jtraj(initial_joint_positions, target_joint_positions, 10).q
+            trajectory_step_index = 0
+
+            # Set the target for check_if_moved to the target position
+            g_target_for_check_if_moved = target_position_world
+
+            # Set the flag to indicate we are coming from a process
+            coming_from_process = True
+
+            # Change the state to STANDBY              
             current_state = STANDBY
-            active_trajectory = None
     
     # If on state MOVING_TO_CELL, move the robot to the target cell
     elif current_state == MOVING_TO_CELL:
@@ -920,7 +1037,6 @@ while supervisor.step(timeStep) != -1:
             batteri_presenti = valore
 
         # WARNING: Here we start the sterilization process for the current cell.
-        
         # Step 1 - detection
         print(f"Detecting bacteria into cell by index {current_cell_index}")
 
