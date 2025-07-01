@@ -49,7 +49,7 @@ Irb4600-40 {
           attenuation 0 0 5
           beamWidth 0.02
           color 0.333 1 1
-          cutOffAngle 0.08
+          cutOffAngle 0.11
           direction -0.22 -1.46 0.38
           intensity 0
         }
@@ -64,7 +64,7 @@ Irb4600-40 {
           attenuation 0 0 5
           beamWidth 0.02
           color 1 0 1
-          cutOffAngle 0.08
+          cutOffAngle 0.11
           direction 0.08 -1.46 0.38
           intensity 0
           castShadows TRUE
