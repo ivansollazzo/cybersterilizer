@@ -84,7 +84,7 @@ camera.enable(timeStep)
 uv_detector = supervisor.getFromDef("UVDetector")
 light_killer = supervisor.getFromDef("killer")
 
-# Initialize bacteria group - AGGIUNTA PER INTEGRAZIONE
+# Initialize bacteria group
 bacteria_group = supervisor.getFromDef("BacteriaGroup")
 
 # Calculate camera parameters
@@ -529,6 +529,9 @@ confirmation_prompt_shown = False
 # Flag to control if the robot is coming from sterilization
 coming_from_process = False
 
+# Flag to control if there's a force reset
+force_reset = False
+
 # To store the last image with grid for display in STANDBY
 last_known_annotated_image = None
 
@@ -538,7 +541,7 @@ while supervisor.step(timeStep) != -1:
     key = keyboard.getKey()
 
     # Global stop command ('x' key)
-    if key == ord('X') or key == ord('x'):
+    if key == ord('X') or key == ord('x') or force_reset:
         
         print("Stop command received ('x'). Returning to STANDBY.")
         current_state = STANDBY
@@ -547,6 +550,7 @@ while supervisor.step(timeStep) != -1:
         standby_prompt_shown = False
         confirmation_prompt_shown = False
         bacteria_spawned = False
+        force_reset = False
         
         # Reset trajectory and step index
         active_trajectory = None
@@ -561,8 +565,33 @@ while supervisor.step(timeStep) != -1:
         current_cell_index = 0
         batteri_dict = {}
 
+        # Resetting flag to indicate the robot is coming from a process
+        coming_from_process = False
+
         # Clear the last known annotated image for the display
         last_known_annotated_image = None
+
+        # Reset all spawned bacteria in the world
+        bacteria_group = supervisor.getFromDef("BacteriaGroup")
+        if bacteria_group:
+            children_field = bacteria_group.getField("children")
+            # Rimuovi tutti i batteri esistenti
+            while children_field.getCount() > 0:
+                children_field.removeMF(0)
+            print("All existing bacteria removed from world.")
+
+        # Power off all spotlights
+        killer_spotlight = supervisor.getFromDef("killerspotlight")
+        if killer_spotlight:
+            intensity_field = killer_spotlight.getField("intensity")
+            if intensity_field:
+                intensity_field.setSFFloat(0.0)
+
+        detector_spotlight = supervisor.getFromDef("detectorspotlight")
+        if detector_spotlight:
+            intensity_field = detector_spotlight.getField("intensity")
+            if intensity_field:
+                intensity_field.setSFFloat(0.0)
         
         # Print a message to indicate the robot has stopped
         print("Robot stopped and reset to STANDBY.")
@@ -581,6 +610,28 @@ while supervisor.step(timeStep) != -1:
 
         # If coming from sterilization, process the trajectory
         if coming_from_process:
+
+            # Set the flag bacteria spawned to False
+            bacteria_spawned = False
+
+            # Reset the bacteria dictionary
+            batteri_dict = {}
+
+            # Reset cam and world centers
+            cam_centers = {}
+            world_centers = {}
+            current_cell_index = 0
+            last_known_annotated_image = None
+
+            # Reset all spawned bacteria in the world
+            bacteria_group = supervisor.getFromDef("BacteriaGroup")
+            if bacteria_group:
+                children_field = bacteria_group.getField("children")
+                
+                # Rimuovi tutti i batteri esistenti
+                while children_field.getCount() > 0:
+                    children_field.removeMF(0)          
+
             # If there's an active trajectory, move the robot along it
             if active_trajectory is not None and trajectory_step_index < len(active_trajectory):
 
@@ -622,11 +673,6 @@ while supervisor.step(timeStep) != -1:
                 # If the robot has not arrived yet, continue moving
                 else:
                     print("Waiting to arrive at standby position...")
-
-        
-        # If a previously annotated image with a grid exists and world_centers is populated, use it for display.
-        if last_known_annotated_image is not None and world_centers:
-            image_to_display_bgr = last_known_annotated_image
 
         # Get the killer spotlight from supervisor. If it is not found, print an error. Otherwise, get the intensity field and set it to 0.
         killer_spotlight = supervisor.getFromDef("killerspotlight")
@@ -1055,6 +1101,11 @@ while supervisor.step(timeStep) != -1:
 
             # Make bacteria visible gradually
             for i in batteri_presenti:
+
+                # If force reset is triggered, break the loop
+                if force_reset:
+                    break
+
                 if i < children_field.getCount():
                     bacterium = children_field.getMFNode(i)
                     if bacterium:
@@ -1067,6 +1118,13 @@ while supervisor.step(timeStep) != -1:
                             transparency = 1.0 - (step / 100)
                             transparency_field.setSFFloat(transparency)
                             supervisor.step(timeStep)
+
+                            # Make sure we can force reset at any time
+                            key = keyboard.getKey()
+                            if key == ord('X') or key == ord('x'):
+                                print("Force reset command received ('x'). Returning to STANDBY.")
+                                force_reset = True
+                                break
 
                             # Update the image every 10 steps to show the visibility change
                             if step % 10 == 0:
@@ -1083,6 +1141,13 @@ while supervisor.step(timeStep) != -1:
             
             for step in range(wait_steps):
                 supervisor.step(timeStep)
+
+                # Make sure we can force reset at any time
+                key = keyboard.getKey()
+                if key == ord('X') or key == ord('x'):
+                    print("Force reset command received ('x'). Returning to STANDBY.")
+                    force_reset = True
+                    break
                 
                 # Update the image every 20 steps to show the detector light
                 if step % 20 == 0:
@@ -1109,6 +1174,13 @@ while supervisor.step(timeStep) != -1:
             wait_steps = int(1000 / timeStep)
             for step in range(wait_steps):
                 supervisor.step(timeStep)
+
+                # Make sure we can force reset at any time
+                key = keyboard.getKey()
+                if key == ord('X') or key == ord('x'):
+                    print("Force reset command received ('x'). Returning to STANDBY.")
+                    force_reset = True
+                    break
                 
                 # Update the image every 20 steps to show the killer light
                 if step % 20 == 0:
@@ -1118,6 +1190,11 @@ while supervisor.step(timeStep) != -1:
 
             # Make bacteria invisible gradually (simulation of sterilization)
             for i in batteri_presenti:
+
+                # If force reset is triggered, break the loop
+                if force_reset:
+                    break
+
                 if i < children_field.getCount():
                     bacterium = children_field.getMFNode(i)
                     if bacterium:
@@ -1130,6 +1207,13 @@ while supervisor.step(timeStep) != -1:
                             transparency = step / 100.0
                             transparency_field.setSFFloat(transparency)
                             supervisor.step(timeStep)
+
+                            # Make sure we can force reset at any time
+                            key = keyboard.getKey()
+                            if key == ord('X') or key == ord('x'):
+                                print("Force reset command received ('x'). Returning to STANDBY.")
+                                force_reset = True
+                                break
 
                             # Update the image every 10 steps to show the visibility change
                             if step % 10 == 0:
@@ -1147,6 +1231,11 @@ while supervisor.step(timeStep) != -1:
             update_display(image_to_display_bgr)
 
             print(f"Cell by index {current_cell_index} has been sterilized successfully.")
+
+            # Remove the bacteria from the world
+            del batteri_dict[current_cell_index]
+            print(f"Bacteria in cell by index {current_cell_index} removed from the world.")
+        
         else:
             # Just turn off the detector spotlight if no bacteria were found
             if detector_spotlight and intensitydetector_field:
