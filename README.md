@@ -1,5 +1,4 @@
-# Cybersterilizer
-> La robotica che fa luce sul domani della sanità
+# Cybersterilizer: la robotica che fa luce sul domani della sanità
 
 Cybersterilizer è un progetto di robotica medica sviluppato come caso di studio per la **sterilizzazione intelligente di aree chirurgiche** tramite doppia luce UV, con particolare attenzione alla **rilevazione automatizzata della carica batterica** e alla **precisione del trattamento localizzato**.
 
