@@ -1,4 +1,4 @@
-# Cybersterilizer: Robotics Shining a Light on the Future of Healthcare
+# Cybersterilizer: Shining a Light on the Future of Healthcare
 
 Cybersterilizer is a medical robotics project developed as a case study for **intelligent sterilization of surgical areas** using dual UV light, with a focus on **automated bacterial load detection** and **precise localized treatment**.
 
