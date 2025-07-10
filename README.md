@@ -81,9 +81,9 @@ The system is built around a **6-degree-of-freedom anthropomorphic robotic arm**
 * Masi Luca
 * Sollazzo Ivan
 
-**Instructor:** Prof. Antonio Chella
-**Institution:** University of Palermo
-**Degree Program:** Master’s Degree in Computer Engineering
+- **Instructor:** Prof. Antonio Chella
+- **Institution:** University of Palermo
+- **Degree Course:** Master’s Degree in Computer Engineering
 
 ---
 
