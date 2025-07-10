@@ -1,87 +1,92 @@
-# Cybersterilizer: la robotica che fa luce sul domani della sanità
+# Cybersterilizer: Robotics Shining a Light on the Future of Healthcare
 
-Cybersterilizer è un progetto di robotica medica sviluppato come caso di studio per la **sterilizzazione intelligente di aree chirurgiche** tramite doppia luce UV, con particolare attenzione alla **rilevazione automatizzata della carica batterica** e alla **precisione del trattamento localizzato**.
+Cybersterilizer is a medical robotics project developed as a case study for **intelligent sterilization of surgical areas** using dual UV light, with a focus on **automated bacterial load detection** and **precise localized treatment**.
 
-Il sistema si basa su un **braccio robotico antropomorfo a 6 gradi di libertà**, equipaggiato con un end effector progettato ad hoc, ed è simulato tramite l’ambiente **Webots**. Il cuore del progetto è rappresentato dall’integrazione tra computer vision (OpenCV + marker ArUco), cinematica robotica (ikpy), e logica di controllo a stati finiti.
-
----
-
-## 🔬 Obiettivi del progetto
-
-- Automatizzare il processo di **rilevamento e sterilizzazione** di superfici chirurgiche.
-- Migliorare la **ripetibilità** e ridurre l’**errore umano** nelle operazioni di disinfezione.
-- Validare l’approccio tramite **simulazione realistica 3D** e prototipazione virtuale.
+The system is built around a **6-degree-of-freedom anthropomorphic robotic arm** equipped with a custom-designed end effector, and is simulated using the **Webots** environment. At its core lies the integration of computer vision (OpenCV + ArUco markers), robotic kinematics (ikpy), and finite state machine control logic.
 
 ---
 
-## ⚙️ Architettura del sistema
+## 🔬 Project Goals
 
-- **Robot base**: ABB IRB 4600/40 a 6 gradi di libertà.
-- **End effector**: modulo cilindrico contenente:
-  - Videocamera per visione artificiale.
-  - Lampada UV-A a 405 nm per rilevazione batterica.
-  - Lampada UV-C a 222 nm per sterilizzazione selettiva.
-
-- **Simulazione e controllo**:
-  - Simulazione Webots.
-  - Logica a macchina a stati finiti.
-  - Cinematica diretta/inversa risolta con **ikpy**.
-  - Visione artificiale con **OpenCV** e **marker ArUco**.
+* Automate the **detection and sterilization** of surgical surfaces.
+* Improve **repeatability** and reduce **human error** in disinfection procedures.
 
 ---
 
-## 🧠 Funzionalità principali
+## ⚙️ System Architecture
 
-### 🔍 Rilevamento automatico dell’area
-- Riconoscimento marker ArUco (DICT_4X4_250) per delimitare l’area da trattare.
-- Generazione dinamica di una **griglia virtuale** di celle su cui operare.
+* **Base robot**: ABB IRB 4600/40 with 6 degrees of freedom.
 
-### 🧬 Rilevazione batterica e sterilizzazione mirata
-- Attivazione della **luce UV-A** per individuare batteri per fluorescenza.
-- In caso di presenza rilevata, attivazione della **luce UV-C** germicida.
+* **End effector**: cylindrical module containing:
 
-### 🧩 Cinematica e navigazione
-- Uso della **convenzione Denavit-Hartenberg** per descrivere il robot.
-- **Kinematics solver** basato su Jacobiano e pseudoinversa.
+  * Camera for computer vision.
+  * 405 nm UV-A lamp for bacterial detection.
+  * 222 nm UV-C lamp for selective sterilization.
 
-### 💡 Visione artificiale e controllo
-- Estrazione marker con `cv2.aruco.detectMarkers()`.
-- Rilevamento dei batteri con `cv2.findContours()` su maschere HSV.
+* **Simulation and control**:
 
-### 💻 Interazione utente
-- Input da tastiera (simulazione): start, conferma, emergenza.
-- Visualizzazione live delle griglie e contorni dei batteri.
+  * Webots simulation.
+  * Finite state machine logic.
+  * Forward/inverse kinematics solved with **ikpy**.
+  * Computer vision with **OpenCV** and **ArUco markers**.
 
 ---
 
-## 🖥️ Tecnologie e strumenti
+## 🧠 Main Features
 
-| Tecnologia | Ruolo |
-|------------|-------|
-| Webots     | Simulazione robotica 3D |
-| Python     | Linguaggio principale |
-| OpenCV     | Computer vision |
-| ikpy       | Cinematica diretta e inversa |
-| Shapr3D    | Modellazione CAD dell’end-effector |
-| ArUco      | Riconoscimento marker e stima della posa |
+### 🔍 Automatic Area Detection
+
+* ArUco marker recognition (DICT\_4X4\_250) to define the treatment area.
+* Dynamic generation of a **virtual grid** of cells to process.
+
+### 🧬 Bacterial Detection and Targeted Sterilization
+
+* Activation of **UV-A light** to detect bacteria via fluorescence.
+* Upon detection, activation of germicidal **UV-C light**.
+
+### 🧩 Kinematics and Navigation
+
+* Use of the **Denavit-Hartenberg convention** to describe the robot.
+* **Kinematics solver** based on the Jacobian and its pseudoinverse.
+
+### 💡 Computer Vision and Control
+
+* Marker extraction with `cv2.aruco.detectMarkers()`.
+* Bacteria detection with `cv2.findContours()` on HSV masks.
+
+### 💻 User Interaction
+
+* Keyboard input (simulation): start, confirm, emergency stop.
+* Live display of grids and detected bacterial contours.
+
+---
+
+## 🖥️ Technologies and Tools
+
+| Technology | Role                                   |
+| ---------- | -------------------------------------- |
+| Webots     | 3D robotics simulation                 |
+| Python     | Main programming language              |
+| OpenCV     | Computer vision                        |
+| ikpy       | Forward and inverse kinematics         |
+| Shapr3D    | CAD modeling of the end effector       |
+| ArUco      | Marker recognition and pose estimation |
 
 ---
 
-## 📎 Autori
+## 📎 Authors
 
-- Ambrogi Federico Ennio
-- Burgio Gabriele
-- Masi Luca
-- Sollazzo Ivan
+* Ambrogi Federico Ennio
+* Burgio Gabriele
+* Masi Luca
+* Sollazzo Ivan
 
-**Docente:** Prof. Antonio Chella
-**Istituzione:** Università degli Studi di Palermo
-**Corso di Laurea:** Corso di Laurea Magistrale in Ingegneria Informatica
-
----
-
-## 📚 Bibliografia
-
-Consulta la documentazione allegata (`Documentazione Cybersterilizer.pdf`) per dettagli su fonti scientifiche, modelli matematici e codice di controllo.
+**Instructor:** Prof. Antonio Chella
+**Institution:** University of Palermo
+**Degree Program:** Master’s Degree in Computer Engineering
 
 ---
+
+## 📚 References
+
+See the attached documentation (`Documentazione Cybersterilizer.pdf`) for details on scientific sources, mathematical models, and control code.
